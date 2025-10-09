@@ -1,0 +1,137 @@
+.moving-reviews-container {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+  padding: 24px;
+  margin: 20px 0;
+  color: white;
+  overflow: hidden;
+  position: relative;
+}
+
+.reviews-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.reviews-header h3 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: white;
+}
+
+.reviews-header p {
+  font-size: 14px;
+  margin: 0;
+  opacity: 0.9;
+}
+
+.reviews-track {
+  overflow: hidden;
+  position: relative;
+  height: 120px;
+}
+
+.reviews-content {
+  display: flex;
+  animation: scroll 30s linear infinite;
+  gap: 20px;
+  width: max-content;
+}
+
+@keyframes scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.review-item {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 280px;
+  max-width: 320px;
+  flex-shrink: 0;
+}
+
+.review-stars {
+  color: #ffd700;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.review-text {
+  font-size: 14px;
+  line-height: 1.4;
+  margin: 0 0 12px 0;
+  font-style: italic;
+  opacity: 0.95;
+}
+
+.review-author {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.author-name {
+  font-weight: 500;
+}
+
+.review-date {
+  opacity: 0.7;
+}
+
+/* Pause animation on hover */
+.reviews-track:hover .reviews-content {
+  animation-play-state: paused;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .moving-reviews-container {
+    padding: 20px;
+    margin: 16px 0;
+  }
+  
+  .reviews-header h3 {
+    font-size: 18px;
+  }
+  
+  .review-item {
+    min-width: 240px;
+    max-width: 280px;
+    padding: 14px;
+  }
+  
+  .review-text {
+    font-size: 13px;
+  }
+  
+  .reviews-content {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .review-item {
+    min-width: 200px;
+    max-width: 240px;
+    padding: 12px;
+  }
+  
+  .review-text {
+    font-size: 12px;
+  }
+  
+  .reviews-content {
+    gap: 12px;
+  }
+}

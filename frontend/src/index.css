@@ -1,0 +1,251 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Minimal base styles with standard Tailwind utilities */
+@layer base {
+  html, body {
+    @apply bg-gray-50 text-gray-900 font-sans;
+  }
+  html.dark, html.dark body {
+    /* Image-inspired deep dark */
+    background-color: #0f1113;
+    color: #e7e9ee;
+  }
+
+  /* Global Neutral Palette (approx from image) */
+  :root {
+    --n1: #ffffff;
+    --n2: #f9f9fb;
+    --n3: #f4f4f6;
+    --n4: #efeff1;
+    --n5: #e3e5e8;
+    --n6: #d6d9de;
+    --n7: #c2c7ce;
+    --n8: #9fa5ad;
+    --n9: #6f7680;
+    --n10: #50555b;
+    --n11: #3a3d41;
+    --n12: #232528;
+    --n13: #151617;
+    --accent: #8b5cf6;
+    --success: #10b981;
+    --danger: #ef4444;
+    /* Surface mappings for easy theming */
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --surface-3: #f3f4f6;
+    --stroke: #e5e7eb;
+    --text-primary: #0f172a;
+    --text-muted: #475569;
+    --text-secondary: #64748b;
+    --text-tertiary: #94a3b8;
+    --text-quaternary: #cbd5e1;
+    --control: #ffffff;
+    --control-stroke: #d1d5db;
+    /* Gradient surface for dark plastic look */
+    --surface-gradient: linear-gradient(135deg, #ffffff, #f8fafc);
+    /* Additional variables for better theme support */
+    --sidebar-bg: #f8fafc;
+    --sidebar-text: #0f172a;
+    --sidebar-text-muted: #475569;
+    --button-text: #0f172a;
+    --button-bg: #ffffff;
+  }
+  html.dark {
+    --surface: #15171a;        /* base panels */
+    --surface-2: #1a1d21;      /* nested panels */
+    --surface-3: #20242a;      /* controls */
+    --stroke: #2a2f36;         /* subtle stroke */
+    --text-primary: #e7e9ee;   /* high-contrast text */
+    --text-muted: #a4aab3;     /* muted text */
+    --text-secondary: #94a3b8; /* secondary text */
+    --text-tertiary: #64748b;  /* tertiary text */
+    --text-quaternary: #475569; /* quaternary text */
+    --control: #1f2329;        /* inputs */
+    --control-stroke: #303641;
+    /* Gradient surface for dark plastic look */
+    --surface-gradient: linear-gradient(135deg, #14161a, #1d2126);
+    /* Additional variables for better theme support */
+    --sidebar-bg: #0f1113;
+    --sidebar-text: #e7e9ee;
+    --sidebar-text-muted: #a4aab3;
+    --button-text: #e7e9ee;
+    --button-bg: #1f2329;
+  }
+  
+  /* Force theme application */
+  html.dark * {
+    color-scheme: dark;
+  }
+  
+  html:not(.dark) * {
+    color-scheme: light;
+  }
+}
+
+/* Optional: lightweight custom utilities that only use default Tailwind colors */
+@layer components {
+  .stat-card, .yaba-card {
+    position: relative;
+    background: var(--surface-gradient);
+    border: 1px solid var(--stroke);
+    border-radius: 20px;
+    padding: 16px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.35);
+    color: var(--text-primary);
+    overflow: hidden;
+    transition: all 0.3s ease;
+  }
+  .yaba-card::before {
+    content: "";
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.06) 40%, rgba(255,255,255,0) 60%);
+    transform: rotate(25deg);
+    animation: shine 1.6s ease-out 1;
+    animation-fill-mode: forwards;
+    pointer-events: none;
+  }
+  .dark .stat-card, .dark .yaba-card { box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
+  .yaba-card-title { font-size: 18px; line-height: 1.4; margin: 0 0 8px 0; color: var(--text-primary); }
+  .yaba-muted { color: var(--text-muted); font-weight: 600; }
+  .yaba-btn { 
+    padding: 8px 12px; 
+    border-radius: 10px; 
+    border: none; 
+    cursor: pointer; 
+    color: var(--button-text); 
+    transition: all 150ms ease; 
+    background-color: var(--accent);
+    font-weight: 500;
+  }
+  .yaba-btn:hover { 
+    filter: brightness(1.05); 
+    transform: translateY(-1px);
+  }
+  .yaba-btn:active { 
+    filter: brightness(0.95); 
+    transform: translateY(0);
+  }
+  .yaba-btn--accent { background-color: var(--accent); color: #fff; }
+  .yaba-btn--success { background-color: var(--success); color: #fff; }
+
+  /* Secondary button like in the image */
+  .yaba-btn--secondary {
+    background-color: var(--surface-3);
+    color: var(--text-primary);
+    border: 1px solid var(--stroke);
+  }
+
+  /* Inputs styled to dark UI */
+  .yaba-input, .yaba-select, .yaba-field {
+    background-color: var(--control);
+    color: var(--text-primary);
+    border: 1px solid var(--control-stroke);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  /* Card-like select without glossy overlay; ensures dark background */
+  .select-card {
+    background-color: var(--surface-2) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important; /* ensure visible text in WebKit */
+    border: 1px solid rgba(192, 132, 252, 0.6);
+    border-radius: 12px;
+    padding-right: 3rem; /* space for custom caret */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    color-scheme: dark; /* force native UI to dark */
+    /* Layered background: caret on top of a solid dark layer */
+    background-image: 
+      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="%23c084fc" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'),
+      linear-gradient(var(--surface-2), var(--surface-2));
+    background-repeat: no-repeat, no-repeat;
+    background-position: right 0.9rem center, 0 0;
+    background-size: 18px 18px, 100% 100%;
+    -webkit-tap-highlight-color: rgba(0,0,0,0);
+  }
+  .dark .select-card { background-color: var(--surface-2) !important; }
+
+  /* Ensure no white flash on focus/open */
+  .select-card:focus,
+  .select-card:active,
+  .select-card:focus-visible {
+    background-color: var(--surface-2) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+    background-image: 
+      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="%23c084fc" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'),
+      linear-gradient(var(--surface-2), var(--surface-2));
+    background-repeat: no-repeat, no-repeat;
+    background-position: right 0.9rem center, 0 0;
+    background-size: 18px 18px, 100% 100%;
+    box-shadow: 0 0 0 2px rgba(167,139,250,0.35) !important;
+    border-color: #a78bfa; /* brighter purple */
+    outline: none;
+  }
+
+  /* Dropdown menu items */
+  .select-card option {
+    background-color: var(--surface-2) !important;
+    color: var(--text-primary) !important;
+  }
+  .dark .select-card option {
+    background-color: var(--surface-3) !important;
+    color: var(--text-primary);
+  }
+  .select-card option:checked,
+  .select-card option:hover,
+  .select-card option:focus {
+    background-color: #2a2f36 !important; /* darker highlight in dark mode */
+    color: var(--text-primary);
+  }
+
+  /* Hide default arrow in IE/Edge Legacy */
+  .select-card::-ms-expand { display: none; }
+  .yaba-input::placeholder { color: var(--text-muted); }
+
+  /* Elevations */
+  .yaba-elev-1 { background-color: var(--surface); }
+  .yaba-elev-2 { background-color: var(--surface-2); }
+  .yaba-elev-3 { background-color: var(--surface-3); }
+  /* Cursor-like accent for focus states */
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid #8b5cf6;
+    outline-offset: 0;
+  }
+  /* Helpers to quickly apply neutrals */
+  .bg-surface-light { background-color: var(--n1); }
+  .bg-surface-dark { background-color: var(--n12); }
+  .text-primary-light { color: var(--n12); }
+  .text-primary-dark { color: var(--n2); }
+}
+
+/* Optional custom scrollbar using plain CSS colors */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #f3f4f6; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* Animations for real-time indicators */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Shine animation for glossy plastic effect */
+@keyframes shine {
+  0% { transform: translateX(-100%) rotate(25deg); }
+  100% { transform: translateX(100%) rotate(25deg); }
+}

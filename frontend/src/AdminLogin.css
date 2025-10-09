@@ -1,0 +1,17 @@
+/* AdminLogin specific styles */
+.admin-login-container input::placeholder {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.admin-login-container input:focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
+}
+
+.admin-login-container button:hover {
+  opacity: 0.9;
+}
+
+.admin-login-container button:active {
+  transform: translateY(1px);
+}

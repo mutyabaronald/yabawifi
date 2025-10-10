@@ -84,6 +84,14 @@ app.use(express.static(path.join(__dirname, "../frontend")));
 // Serve uploaded branding files
 app.use('/uploads/branding', express.static(path.join(__dirname, 'uploads/branding')));
 
+// Health check endpoint for Render.com
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    message: 'WiFi Automation API is running',
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Moved MTN integration into routes/mtn.js
 

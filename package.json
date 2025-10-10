@@ -1,0 +1,18 @@
+{
+  "name": "wifi-automation",
+  "version": "1.0.0",
+  "description": "WiFi automation project with React frontend and Node.js backend",
+  "main": "backend/server.js",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "start": "cd backend && npm install && npm start",
+    "dev": "concurrently \"cd frontend && npm run dev\" \"cd backend && npm run dev\"",
+    "install-all": "npm install && cd frontend && npm install && cd ../backend && npm install"
+  },
+  "keywords": ["wifi", "automation", "react", "nodejs"],
+  "author": "mutyabaronald",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

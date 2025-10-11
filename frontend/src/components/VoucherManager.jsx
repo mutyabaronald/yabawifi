@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { formatUGX } from './currency';
 
-const apiBase = 'http://localhost:5000/api';
+const apiBase = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api`;
 
 const VoucherManager = ({ ownerId, onClose }) => {
   const [loading, setLoading] = useState(false);

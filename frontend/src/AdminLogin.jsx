@@ -40,20 +40,21 @@ function AdminLogin() {
     const fetchData = async () => {
       try {
         console.log("Fetching data from API...");
+        const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000';
         const [reviewsRes, usersRes, contactRes] = await Promise.all([
-          fetch("http://localhost:5000/api/statistics/reviews", {
+          fetch(`${apiBase}/api/statistics/reviews`, {
             headers: {
               'Cache-Control': 'no-cache',
               'Pragma': 'no-cache'
             }
           }),
-          fetch("http://localhost:5000/api/statistics/daily-users", {
+          fetch(`${apiBase}/api/statistics/daily-users`, {
             headers: {
               'Cache-Control': 'no-cache',
               'Pragma': 'no-cache'
             }
           }),
-          fetch("http://localhost:5000/api/super/contact-info", {
+          fetch(`${apiBase}/api/super/contact-info`, {
             headers: {
               'Cache-Control': 'no-cache',
               'Pragma': 'no-cache'
@@ -119,7 +120,8 @@ function AdminLogin() {
     try {
       console.log("Attempting login with phone:", phone);
       
-      const res = await fetch("http://localhost:5000/api/owners/login", {
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const res = await fetch(`${apiBase}/api/owners/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

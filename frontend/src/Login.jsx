@@ -164,7 +164,7 @@ function Login() {
       setIsLoading(true);
       
       // Use backend API instead of direct Firebase access
-      const response = await fetch('/api/users/auth', {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/users/auth`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

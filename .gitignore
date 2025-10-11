@@ -15,7 +15,6 @@ backend/build/
 **/.env
 backend/serviceAccountKey.json
 backend/firebase-config.json
-backend/firebase.js
 backend/firebase-admin.js
 backend/firebase-storage.js
 

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const admin = require('firebase-admin');
+const { admin, db } = require('../firebase');
 
 // Get all campaigns for an owner
 router.get('/campaigns/:ownerId', async (req, res) => {

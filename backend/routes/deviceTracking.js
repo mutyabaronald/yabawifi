@@ -1,6 +1,6 @@
 // routes/deviceTracking.js
 const express = require('express');
-const admin = require('firebase-admin');
+const { admin, db } = require('../firebase');
 const router = express.Router();
 
 // POST /api/devices/connect

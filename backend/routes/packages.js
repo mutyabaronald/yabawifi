@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { db } = require("../firebase");
-const admin = require('firebase-admin');
+const { admin, db } = require("../firebase");
 
 // Get packages for a specific owner
 router.get("/", async (req, res) => {

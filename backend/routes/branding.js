@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { db } = require('../firebase-admin');
+const { db } = require('../firebase');
 const router = express.Router();
 
 // Configure multer for file uploads

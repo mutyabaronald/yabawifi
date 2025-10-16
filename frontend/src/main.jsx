@@ -17,8 +17,6 @@ import Purchase from "./Purchase";
 import UserDashboard from "./UserDashboard";
 import HotspotsMap from "./pages/HotspotsMap";
 
-
-
 import OwnerProfile from "../owner/OwnerProfile";
 import OwnerPackages from "../owner/OwnerPackages";
 import OwnerNotifications from "../owner/OwnerNotifications";
@@ -35,7 +33,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <BrowserRouter>
         <ErrorBoundary fallback={<div style={{ padding: 24 }}>Something went wrong. Please reload the page.</div>}>
           <Routes>
-            <Route path="/" element={<Login />} />
+            {/* Redirect root to owner login */}
+            <Route path="/" element={<Navigate to="/admin/login" replace />} />
+            
+            {/* Optional user login remains accessible directly */}
             <Route path="/user/login" element={<Login />} />
             <Route path="/receipt" element={<Receipt />} />
             <Route path="/adminlogin" element={<AdminLogin />} />

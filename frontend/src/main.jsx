@@ -33,18 +33,24 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <BrowserRouter>
         <ErrorBoundary fallback={<div style={{ padding: 24 }}>Something went wrong. Please reload the page.</div>}>
           <Routes>
-            {/* Redirect root to owner login */}
-            <Route path="/" element={<Navigate to="/admin/login" replace />} />
+            {/* Default: WiFi User login */}
+            <Route path="/" element={<Login />} />
             
-            {/* Optional user login remains accessible directly */}
+            {/* Explicit user route */}
             <Route path="/user/login" element={<Login />} />
+            
             <Route path="/receipt" element={<Receipt />} />
+            
+            {/* WiFi owner (admin) routes */}
             <Route path="/adminlogin" element={<AdminLogin />} />
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admindashboard" element={<AdminDashboard />} />
+            
+            {/* Super admin (app owner) */}
             <Route path="/superdashboard" element={<SuperDashboard />} />
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />
             <Route path="/superadmin/dashboard" element={<SuperDashboard />} />
+            
             <Route path="/packages" element={<Packages />} />
             <Route path="/purchase" element={<Purchase />} />
             <Route path="/myreceipts" element={<MyReceipts />} />

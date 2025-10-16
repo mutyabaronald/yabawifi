@@ -35,9 +35,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <BrowserRouter>
         <ErrorBoundary fallback={<div style={{ padding: 24 }}>Something went wrong. Please reload the page.</div>}>
           <Routes>
-            {/* Redirect legacy/served index.html path to SPA root */}
-            <Route path="/index.html" element={<Navigate to="/" replace />} />
-
             <Route path="/" element={<Login />} />
             <Route path="/user/login" element={<Login />} />
             <Route path="/receipt" element={<Receipt />} />
@@ -54,16 +51,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             <Route path="/register-owner" element={<RegisterOwner />} />
             <Route path="/uploadlogo" element={<UploadLogo />} />
             <Route path="/hotspots" element={<HotspotsMap />} />
-            
 
-  
             <Route path="/owner/profile" element={<OwnerProfile />} />
             <Route path="/owner/packages" element={<OwnerPackages />} />
             <Route path="/owner/notifications" element={<OwnerNotifications />} />
             <Route path="/owner/admins" element={<OwnerAdmins />} />
-
-            {/* Catch-all: redirect unknown paths to root */}
-            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </ErrorBoundary>
       </BrowserRouter>

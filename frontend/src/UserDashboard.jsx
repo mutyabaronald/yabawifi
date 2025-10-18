@@ -833,7 +833,8 @@ function UserDashboard() {
 
         {activeTab === 'transactions' && (
           <div style={styles.section}>
-            <TransactionsSection transactions={transactions} />
+            {console.log('Rendering TransactionsSection with transactions:', transactions)}
+            <TransactionsSection transactions={transactions || []} />
           </div>
         )}
 

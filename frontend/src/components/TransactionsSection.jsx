@@ -1,29 +1,29 @@
 import { formatUGX } from "./currency";
 import React, { useState, useEffect } from 'react';
 
-const TransactionsSection = ({ transactions }) => {
+const TransactionsSection = ({ transactions = [] }) => {
   const [filterType, setFilterType] = useState('all');
   const [sortBy, setSortBy] = useState('date');
   const [filteredTransactions, setFilteredTransactions] = useState([]);
 
-  // Calculate summary metrics
-  const totalSpent = transactions
-    .filter(t => t.type === 'purchase' && t.amount)
+  // Calculate summary metrics - add safety checks
+  const totalSpent = (transactions || [])
+    .filter(t => t && t.type === 'purchase' && t.amount)
     .reduce((sum, t) => sum + (t.amount || 0), 0);
 
-  const totalSaved = transactions
-    .filter(t => (t.type === 'voucher' || t.type === 'points') && t.originalPrice)
+  const totalSaved = (transactions || [])
+    .filter(t => t && (t.type === 'voucher' || t.type === 'points') && t.originalPrice)
     .reduce((sum, t) => sum + (t.originalPrice || 0), 0);
 
-  const totalTransactions = transactions.length;
+  const totalTransactions = (transactions || []).length;
 
   // Filter and sort transactions
   useEffect(() => {
-    let filtered = [...transactions];
+    let filtered = [...(transactions || [])];
 
     // Apply filter
     if (filterType !== 'all') {
-      filtered = filtered.filter(t => t.type === filterType);
+      filtered = filtered.filter(t => t && t.type === filterType);
     }
 
     // Apply sorting
@@ -122,6 +122,23 @@ const TransactionsSection = ({ transactions }) => {
         return { bg: '#f3f4f6', text: '#374151' };
     }
   };
+
+  // Add error boundary
+  if (!transactions) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <div style={styles.headerLeft}>
+            <h1 style={styles.title}>Transaction History</h1>
+            <p style={styles.subtitle}>Loading your transaction data...</p>
+          </div>
+        </div>
+        <div style={styles.emptyState}>
+          <p style={styles.emptyText}>Loading transactions...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>

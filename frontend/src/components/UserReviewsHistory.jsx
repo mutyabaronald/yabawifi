@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useTheme } from '../contexts/ThemeContext';
 
 const UserReviewsHistory = ({ userPhone, currentHotspotId }) => {
+  const { isDark } = useTheme();
+  const isDarkMode = isDark;
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -59,23 +62,24 @@ const UserReviewsHistory = ({ userPhone, currentHotspotId }) => {
 
   if (loading) {
     return (
-      <div style={styles.container}>
-        <div style={styles.loading}>Loading your reviews...</div>
+      <div style={{...styles.container, backgroundColor: isDarkMode ? 'var(--n13)' : 'var(--n3)'}}>
+        <div className="yaba-card" style={styles.loading}>Loading your reviews...</div>
       </div>
     );
   }
 
   return (
-    <div style={styles.container}>
+    <div style={{...styles.container, backgroundColor: isDarkMode ? 'var(--n13)' : 'var(--n3)'}}>
       {/* Header */}
-      <div style={styles.header}>
+      <div className="yaba-card" style={{...styles.header, backgroundColor: isDarkMode ? 'var(--n12)' : 'var(--n1)', color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
         <div style={styles.headerLeft}>
-          <h2 style={styles.title}>My Reviews & Ratings</h2>
-          <p style={styles.subtitle}>Track your feedback and responses from hotspot owners</p>
+          <h2 className="yaba-card-title" style={{...styles.title, color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>My Reviews & Ratings</h2>
+          <p className="yaba-muted" style={{...styles.subtitle, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>Track your feedback and responses from hotspot owners</p>
         </div>
         <div style={styles.headerRight}>
           <button
             onClick={fetchUserReviews}
+            className="yaba-btn yaba-btn--accent"
             style={styles.refreshButton}
           >
             🔄 Refresh
@@ -85,26 +89,27 @@ const UserReviewsHistory = ({ userPhone, currentHotspotId }) => {
 
       {/* Stats Cards */}
       <div style={styles.statsGrid}>
-        <div style={styles.statCard}>
-          <div style={styles.statNumber}>{stats.totalReviews}</div>
-          <div style={styles.statLabel}>Reviews Given</div>
+        <div className="yaba-card" style={{...styles.statCard, backgroundColor: isDarkMode ? 'var(--n12)' : 'var(--n1)', color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
+          <div className="yaba-card-title" style={{...styles.statNumber, color: isDarkMode ? 'var(--accent)' : '#3b82f6'}}>{stats.totalReviews}</div>
+          <div className="yaba-muted" style={{...styles.statLabel, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>Reviews Given</div>
         </div>
-        <div style={styles.statCard}>
-          <div style={styles.statNumber}>{stats.averageRating.toFixed(1)}</div>
-          <div style={styles.statLabel}>Your Avg Rating</div>
+        <div className="yaba-card" style={{...styles.statCard, backgroundColor: isDarkMode ? 'var(--n12)' : 'var(--n1)', color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
+          <div className="yaba-card-title" style={{...styles.statNumber, color: isDarkMode ? 'var(--accent)' : '#3b82f6'}}>{stats.averageRating.toFixed(1)}</div>
+          <div className="yaba-muted" style={{...styles.statLabel, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>Your Avg Rating</div>
         </div>
-        <div style={styles.statCard}>
-          <div style={styles.statNumber}>{stats.totalReplies}</div>
-          <div style={styles.statLabel}>Owner Replies</div>
+        <div className="yaba-card" style={{...styles.statCard, backgroundColor: isDarkMode ? 'var(--n12)' : 'var(--n1)', color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
+          <div className="yaba-card-title" style={{...styles.statNumber, color: isDarkMode ? 'var(--accent)' : '#3b82f6'}}>{stats.totalReplies}</div>
+          <div className="yaba-muted" style={{...styles.statLabel, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>Owner Replies</div>
         </div>
       </div>
 
       {/* Error Display */}
       {error && (
-        <div style={styles.error}>
+        <div className="yaba-card" style={{...styles.error, backgroundColor: isDarkMode ? 'var(--danger)' : '#fee2e2', color: isDarkMode ? 'var(--n1)' : '#dc2626'}}>
           ❌ {error}
           <button 
             onClick={() => setError('')} 
+            className="yaba-btn yaba-btn--secondary"
             style={styles.errorClose}
           >
             ✕
@@ -113,32 +118,32 @@ const UserReviewsHistory = ({ userPhone, currentHotspotId }) => {
       )}
 
       {/* Reviews List */}
-      <div style={styles.reviewsSection}>
-        <h3 style={styles.sectionTitle}>
+      <div className="yaba-card" style={{...styles.reviewsSection, backgroundColor: isDarkMode ? 'var(--n12)' : 'var(--n1)', color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
+        <h3 className="yaba-card-title" style={{...styles.sectionTitle, color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
           Your Review History ({reviews.length})
         </h3>
         
         {reviews.length === 0 ? (
-          <div style={styles.emptyState}>
+          <div style={{...styles.emptyState, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>
             <div style={styles.emptyIcon}>📝</div>
-            <h4 style={styles.emptyTitle}>No Reviews Yet</h4>
-            <p style={styles.emptyText}>
+            <h4 className="yaba-card-title" style={{...styles.emptyTitle, color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>No Reviews Yet</h4>
+            <p className="yaba-muted" style={{...styles.emptyText, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>
               You haven't submitted any reviews yet. Rate and review hotspots after purchasing packages to see them here.
             </p>
           </div>
         ) : (
           <div style={styles.reviewsList}>
             {reviews.map((review) => (
-              <div key={review.id} style={styles.reviewCard}>
+              <div key={review.id} className="yaba-card yaba-elev-2" style={{...styles.reviewCard, backgroundColor: isDarkMode ? 'var(--n12)' : '#fafafa', border: isDarkMode ? '1px solid var(--n13)' : '1px solid #e5e7eb'}}>
                 {/* Review Header */}
                 <div style={styles.reviewHeader}>
                   <div style={styles.hotspotInfo}>
                     <div style={styles.hotspotIcon}>📶</div>
                     <div style={styles.hotspotDetails}>
-                      <div style={styles.hotspotName}>
+                      <div className="yaba-card-title" style={{...styles.hotspotName, color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
                         {review.hotspotName || 'Hotspot'}
                       </div>
-                      <div style={styles.reviewDate}>
+                      <div className="yaba-muted" style={{...styles.reviewDate, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>
                         {formatDate(review.createdAt)}
                       </div>
                     </div>
@@ -150,14 +155,14 @@ const UserReviewsHistory = ({ userPhone, currentHotspotId }) => {
                           key={star}
                           style={{
                             ...styles.star,
-                            color: star <= review.rating ? '#f59e0b' : '#d1d5db'
+                            color: star <= review.rating ? '#f59e0b' : (isDarkMode ? 'var(--n8)' : '#d1d5db')
                           }}
                         >
                           {star <= review.rating ? '★' : '☆'}
                         </span>
                       ))}
                     </div>
-                    <div style={styles.ratingNumber}>
+                    <div className="yaba-card-title" style={{...styles.ratingNumber, color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>
                       {review.rating}/5
                     </div>
                   </div>
@@ -166,44 +171,44 @@ const UserReviewsHistory = ({ userPhone, currentHotspotId }) => {
                 {/* Review Content */}
                 {review.review && (
                   <div style={styles.reviewContent}>
-                    <p style={styles.reviewText}>{review.review}</p>
+                    <p className="yaba-muted" style={{...styles.reviewText, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>{review.review}</p>
                   </div>
                 )}
 
                 {/* Package Info */}
                 {review.packageName && (
-                  <div style={styles.packageInfo}>
-                    <span style={styles.packageLabel}>Package:</span>
-                    <span style={styles.packageName}>{review.packageName}</span>
-                    <span style={styles.packagePrice}>{review.packagePrice} UGX</span>
+                  <div style={{...styles.packageInfo, backgroundColor: isDarkMode ? 'var(--n13)' : '#f3f4f6'}}>
+                    <span className="yaba-muted" style={{...styles.packageLabel, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>Package:</span>
+                    <span className="yaba-card-title" style={{...styles.packageName, color: isDarkMode ? 'var(--n2)' : 'var(--n11)'}}>{review.packageName}</span>
+                    <span className="yaba-card-title" style={{...styles.packagePrice, color: isDarkMode ? 'var(--success)' : '#10b981'}}>{review.packagePrice} UGX</span>
                   </div>
                 )}
 
                 {/* Admin Reply */}
                 {review.adminReply ? (
-                  <div style={styles.adminReply}>
+                  <div style={{...styles.adminReply, backgroundColor: isDarkMode ? 'var(--n13)' : '#eff6ff', border: isDarkMode ? '1px solid var(--n12)' : '1px solid #dbeafe'}}>
                     <div style={styles.replyHeader}>
-                      <span style={styles.replyLabel}>Owner's Reply:</span>
-                      <span style={styles.replyDate}>
+                      <span className="yaba-muted" style={{...styles.replyLabel, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>Owner's Reply:</span>
+                      <span className="yaba-muted" style={{...styles.replyDate, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>
                         {formatDate(review.adminReply.createdAt)}
                       </span>
                     </div>
-                    <p style={styles.replyText}>{review.adminReply.reply}</p>
+                    <p className="yaba-muted" style={{...styles.replyText, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>{review.adminReply.reply}</p>
                   </div>
                 ) : (
-                  <div style={styles.noReply}>
-                    <span style={styles.noReplyText}>
+                  <div style={{...styles.noReply, backgroundColor: isDarkMode ? 'var(--n13)' : '#f3f4f6', border: isDarkMode ? '1px solid var(--n12)' : '1px solid #e5e7eb'}}>
+                    <span className="yaba-muted" style={{...styles.noReplyText, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>
                       No reply from owner yet
                     </span>
                   </div>
                 )}
 
                 {/* Review Status */}
-                <div style={styles.reviewStatus}>
-                  <span style={styles.statusLabel}>Status:</span>
-                  <span style={{
+                <div style={{...styles.reviewStatus, borderTop: isDarkMode ? '1px solid var(--n12)' : '1px solid #e5e7eb'}}>
+                  <span className="yaba-muted" style={{...styles.statusLabel, color: isDarkMode ? 'var(--n8)' : 'var(--n9)'}}>Status:</span>
+                  <span className="yaba-btn" style={{
                     ...styles.statusBadge,
-                    backgroundColor: review.adminReply ? '#10b981' : '#f59e0b'
+                    backgroundColor: review.adminReply ? (isDarkMode ? 'var(--success)' : '#10b981') : (isDarkMode ? 'var(--warning)' : '#f59e0b')
                   }}>
                     {review.adminReply ? 'Replied' : 'Pending Reply'}
                   </span>
@@ -220,7 +225,6 @@ const UserReviewsHistory = ({ userPhone, currentHotspotId }) => {
 const styles = {
   container: {
     padding: '24px',
-    backgroundColor: '#f9fafb',
     minHeight: '100vh'
   },
   header: {
@@ -229,7 +233,6 @@ const styles = {
     alignItems: 'flex-start',
     marginBottom: '32px',
     padding: '24px',
-    backgroundColor: 'var(--surface)',
     borderRadius: '12px',
     boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'
   },
@@ -272,7 +275,6 @@ const styles = {
     marginBottom: '32px'
   },
   statCard: {
-    backgroundColor: 'var(--surface)',
     padding: '24px',
     borderRadius: '12px',
     textAlign: 'center',
@@ -307,7 +309,6 @@ const styles = {
     fontSize: '18px'
   },
   reviewsSection: {
-    backgroundColor: 'var(--surface)',
     borderRadius: '12px',
     padding: '24px',
     boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'

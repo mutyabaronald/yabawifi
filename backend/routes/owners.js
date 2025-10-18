@@ -13,11 +13,11 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get("/by-phone/:phone", async (req, res) => {
   try {
     const { phone } = req.params;
-    
+
     if (!phone) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Phone number is required" 
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required",
       });
     }
 
@@ -26,9 +26,9 @@ router.get("/by-phone/:phone", async (req, res) => {
     const snapshot = await ownerQuery.get();
 
     if (snapshot.empty) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Owner not found" 
+      return res.status(404).json({
+        success: false,
+        message: "Owner not found",
       });
     }
 
@@ -44,14 +44,13 @@ router.get("/by-phone/:phone", async (req, res) => {
         ownerWhatsapp: ownerData.ownerWhatsapp,
         businessName: ownerData.businessName,
         logoUrl: ownerData.logoUrl,
-      }
+      },
     });
-
   } catch (error) {
     console.error("Get owner by phone error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 });
@@ -63,51 +62,81 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Owner Login
+// Owner Login - Optimized for performance
 router.post("/login", async (req, res) => {
   try {
     const { phone, password } = req.body;
-    
+
     if (!phone || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Phone and password are required" 
+      return res.status(400).json({
+        success: false,
+        message: "Phone and password are required",
       });
     }
 
-    // Find owner by phone
-    const ownerQuery = db.collection("owners").where("ownerPhone", "==", phone);
-    const snapshot = await ownerQuery.get();
+    // Optimize: Use document ID lookup if phone is the document ID, otherwise use query
+    let ownerDoc, ownerData;
 
-    if (snapshot.empty) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Invalid phone number or password" 
-      });
+    try {
+      // First try direct document access (faster if phone is used as doc ID)
+      ownerDoc = await db.collection("owners").doc(phone).get();
+      if (ownerDoc.exists) {
+        ownerData = ownerDoc.data();
+        // Verify the phone matches (in case doc ID is different)
+        if (ownerData.ownerPhone !== phone) {
+          ownerDoc = null;
+        }
+      } else {
+        ownerDoc = null;
+      }
+    } catch (err) {
+      ownerDoc = null;
     }
 
-    const ownerDoc = snapshot.docs[0];
-    const ownerData = ownerDoc.data();
+    // Fallback to query if direct access failed
+    if (!ownerDoc || !ownerDoc.exists) {
+      const ownerQuery = db
+        .collection("owners")
+        .where("ownerPhone", "==", phone)
+        .limit(1);
+      const snapshot = await ownerQuery.get();
+
+      if (snapshot.empty) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid phone number or password",
+        });
+      }
+
+      ownerDoc = snapshot.docs[0];
+      ownerData = ownerDoc.data();
+    }
 
     // Check password (in production, use bcrypt to hash passwords)
     if (ownerData.password !== password) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Invalid phone number or password" 
+      return res.status(401).json({
+        success: false,
+        message: "Invalid phone number or password",
       });
     }
 
     // Generate simple token (in production, use JWT)
     const token = uuidv4();
 
-    // Store token in Firestore for session management
-    await db.collection("owner_sessions").doc(token).set({
-      ownerId: ownerDoc.id,
-      phone: ownerData.ownerPhone,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
-    });
+    // Store token in Firestore for session management (async, don't wait)
+    db.collection("owner_sessions")
+      .doc(token)
+      .set({
+        ownerId: ownerDoc.id,
+        phone: ownerData.ownerPhone,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
+      })
+      .catch((err) => {
+        console.warn("Session storage failed:", err);
+      });
 
+    // Return response immediately without waiting for session storage
     res.json({
       success: true,
       token,
@@ -117,14 +146,13 @@ router.post("/login", async (req, res) => {
         ownerPhone: ownerData.ownerPhone,
         businessName: ownerData.businessName,
         logoUrl: ownerData.logoUrl,
-      }
+      },
     });
-
   } catch (error) {
     console.error("Owner login error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error during login" 
+    res.status(500).json({
+      success: false,
+      message: "Server error during login",
     });
   }
 });
@@ -136,44 +164,44 @@ router.get("/profile/:ownerId", async (req, res) => {
     const token = req.headers.authorization?.replace("Bearer ", "");
 
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Authentication token required" 
+      return res.status(401).json({
+        success: false,
+        message: "Authentication token required",
       });
     }
 
     // Verify token
     const sessionDoc = await db.collection("owner_sessions").doc(token).get();
     if (!sessionDoc.exists) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Invalid or expired session" 
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired session",
       });
     }
 
     const sessionData = sessionDoc.data();
     if (sessionData.ownerId !== ownerId) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Access denied" 
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
       });
     }
 
     // Check if session expired
     if (new Date(sessionData.expiresAt) < new Date()) {
       await sessionDoc.ref.delete();
-      return res.status(401).json({ 
-        success: false, 
-        message: "Session expired" 
+      return res.status(401).json({
+        success: false,
+        message: "Session expired",
       });
     }
 
     // Get owner profile
     const ownerDoc = await db.collection("owners").doc(ownerId).get();
     if (!ownerDoc.exists) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Owner not found" 
+      return res.status(404).json({
+        success: false,
+        message: "Owner not found",
       });
     }
 
@@ -189,14 +217,13 @@ router.get("/profile/:ownerId", async (req, res) => {
         ownerWhatsapp: ownerData.ownerWhatsapp,
         createdAt: ownerData.createdAt,
         tagline: ownerData.tagline || ownerData.motto || ownerData.slogan || "",
-      }
+      },
     });
-
   } catch (error) {
     console.error("Get profile error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 });
@@ -207,20 +234,22 @@ router.post("/register", async (req, res) => {
     const { ownerName, ownerPhone, password, businessName } = req.body;
 
     if (!ownerName || !ownerPhone || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Owner name, phone, and password are required" 
+      return res.status(400).json({
+        success: false,
+        message: "Owner name, phone, and password are required",
       });
     }
 
     // Check if phone already exists
-    const existingQuery = db.collection("owners").where("ownerPhone", "==", ownerPhone);
+    const existingQuery = db
+      .collection("owners")
+      .where("ownerPhone", "==", ownerPhone);
     const existingSnapshot = await existingQuery.get();
-    
+
     if (!existingSnapshot.empty) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Phone number already registered" 
+      return res.status(400).json({
+        success: false,
+        message: "Phone number already registered",
       });
     }
 
@@ -244,12 +273,11 @@ router.post("/register", async (req, res) => {
       message: "Owner registered successfully",
       ownerId: docRef.id,
     });
-
   } catch (error) {
     console.error("Owner registration error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Failed to register owner" 
+    res.status(500).json({
+      success: false,
+      message: "Failed to register owner",
     });
   }
 });
@@ -261,16 +289,22 @@ router.post("/change-password", async (req, res) => {
     const { currentPassword, newPassword } = req.body || {};
 
     if (!token) {
-      return res.status(401).json({ success: false, message: "Authentication token required" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Authentication token required" });
     }
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({ success: false, message: "Missing passwords" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing passwords" });
     }
 
     // Resolve session → ownerId
     const sessionDoc = await db.collection("owner_sessions").doc(token).get();
     if (!sessionDoc.exists) {
-      return res.status(401).json({ success: false, message: "Invalid or expired session" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid or expired session" });
     }
     const { ownerId } = sessionDoc.data();
 
@@ -278,7 +312,9 @@ router.post("/change-password", async (req, res) => {
     const ownerRef = db.collection("owners").doc(ownerId);
     const ownerDoc = await ownerRef.get();
     if (!ownerDoc.exists) {
-      return res.status(404).json({ success: false, message: "Owner not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Owner not found" });
     }
     const owner = ownerDoc.data();
 
@@ -292,16 +328,26 @@ router.post("/change-password", async (req, res) => {
       currentOk = stored === currentPassword;
     }
     if (!currentOk) {
-      return res.status(401).json({ success: false, message: "Wrong current password" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Wrong current password" });
     }
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    await ownerRef.set({ password: newHash, updatedAt: new Date().toISOString() }, { merge: true });
+    await ownerRef.set(
+      { password: newHash, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
 
     // Invalidate session to force re-login
-    try { await db.collection("owner_sessions").doc(token).delete(); } catch {}
+    try {
+      await db.collection("owner_sessions").doc(token).delete();
+    } catch {}
 
-    return res.json({ success: true, message: "Password updated. Please log in again." });
+    return res.json({
+      success: true,
+      message: "Password updated. Please log in again.",
+    });
   } catch (e) {
     console.error("owner change-password error", e);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -312,30 +358,42 @@ router.post("/change-password", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { ownerPhone, ownerWhatsapp, reviewsEnabled, ownerName, motto, slogan, tagline } = req.body;
+    const {
+      ownerPhone,
+      ownerWhatsapp,
+      reviewsEnabled,
+      ownerName,
+      motto,
+      slogan,
+      tagline,
+    } = req.body;
     if (!ownerPhone || !ownerWhatsapp) {
-      return res.status(400).json({ success: false, message: "Missing phone or WhatsApp." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing phone or WhatsApp." });
     }
-    
-    const updateData = { 
-      ownerPhone, 
-      ownerWhatsapp, 
-      updatedAt: new Date().toISOString() 
+
+    const updateData = {
+      ownerPhone,
+      ownerWhatsapp,
+      updatedAt: new Date().toISOString(),
     };
-    
-    if (typeof reviewsEnabled === 'boolean') {
+
+    if (typeof reviewsEnabled === "boolean") {
       updateData.reviewsEnabled = reviewsEnabled;
     }
     if (ownerName) updateData.ownerName = ownerName;
     if (motto) updateData.motto = motto;
     if (slogan) updateData.slogan = slogan;
     if (tagline) updateData.tagline = tagline;
-    
+
     await db.collection("owners").doc(id).set(updateData, { merge: true });
     const doc = await db.collection("owners").doc(id).get();
     res.json({ success: true, owner: { id: doc.id, ...doc.data() } });
   } catch (err) {
-    res.status(500).json({ success: false, message: "Failed to update owner." });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update owner." });
   }
 });
 
@@ -399,15 +457,15 @@ router.get("/logo/:ownerId", async (req, res) => {
     }
 
     const data = doc.data();
-      res.json({
-    logoUrl: data.logoUrl || null,
-    ownerName: data.ownerName || "",
-    ownerPhone: data.ownerPhone || "",
-    ownerWhatsapp: data.ownerWhatsapp || "",
-    motto: data.motto || null,
-    slogan: data.slogan || null,
-    tagline: data.tagline || null,
-  });
+    res.json({
+      logoUrl: data.logoUrl || null,
+      ownerName: data.ownerName || "",
+      ownerPhone: data.ownerPhone || "",
+      ownerWhatsapp: data.ownerWhatsapp || "",
+      motto: data.motto || null,
+      slogan: data.slogan || null,
+      tagline: data.tagline || null,
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
@@ -466,9 +524,14 @@ router.post("/:ownerId/wallet/withdraw", async (req, res) => {
       transaction.update(walletRef, {
         balance: (data.balance || 0) - amount,
         transactions: [
-          { type: "withdrawal", amount, date: new Date().toISOString(), description: `Withdrawal to ${mobileMoneyNumber}` },
-          ...(data.transactions || [])
-        ].slice(0, 100) // keep last 100
+          {
+            type: "withdrawal",
+            amount,
+            date: new Date().toISOString(),
+            description: `Withdrawal to ${mobileMoneyNumber}`,
+          },
+          ...(data.transactions || []),
+        ].slice(0, 100), // keep last 100
       });
     });
     // --- MTN MoMo payout integration ---
@@ -479,27 +542,29 @@ router.post("/:ownerId/wallet/withdraw", async (req, res) => {
         null,
         {
           headers: {
-            "Ocp-Apim-Subscription-Key": process.env.MTN_PRIMARY_KEY
+            "Ocp-Apim-Subscription-Key": process.env.MTN_PRIMARY_KEY,
           },
           auth: {
             username: process.env.MTN_API_USER,
-            password: process.env.MTN_API_KEY
-          }
+            password: process.env.MTN_API_KEY,
+          },
         }
       );
       const accessToken = tokenRes.data.access_token;
       // Prepare payout payload
-      const externalId = `${process.env.MTN_REFERENCE_ID || 'withdrawal'}-${ownerId}-${Date.now()}`;
+      const externalId = `${
+        process.env.MTN_REFERENCE_ID || "withdrawal"
+      }-${ownerId}-${Date.now()}`;
       const payoutPayload = {
         amount: amount.toString(),
         currency: "UGX",
         externalId,
         payee: {
           partyIdType: "MSISDN",
-          partyId: mobileMoneyNumber
+          partyId: mobileMoneyNumber,
         },
         payerMessage: "Wi-Fi earnings withdrawal",
-        payeeNote: "Thank you for using our platform"
+        payeeNote: "Thank you for using our platform",
       };
       // Send payout request
       await axios.post(
@@ -510,9 +575,9 @@ router.post("/:ownerId/wallet/withdraw", async (req, res) => {
             "X-Reference-Id": externalId,
             "X-Target-Environment": process.env.MTN_ENV || "sandbox",
             "Ocp-Apim-Subscription-Key": process.env.MTN_PRIMARY_KEY,
-            "Authorization": `Bearer ${accessToken}`,
-            "Content-Type": "application/json"
-          }
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
         }
       );
     }
@@ -527,15 +592,27 @@ router.post("/:ownerId/wallet/withdraw", async (req, res) => {
 router.get("/:ownerId/reports/export/csv", async (req, res) => {
   const { ownerId } = req.params;
   try {
-    const snap = await db.collection("payout_splits").where("ownerId", "==", ownerId).orderBy("createdAt", "desc").limit(1000).get();
-    const rows = ["date,gross,commission,net,packageName"]; 
+    const snap = await db
+      .collection("payout_splits")
+      .where("ownerId", "==", ownerId)
+      .orderBy("createdAt", "desc")
+      .limit(1000)
+      .get();
+    const rows = ["date,gross,commission,net,packageName"];
     snap.docs.forEach((d) => {
       const s = d.data();
-      rows.push(`${s.createdAt},${s.grossAmount || 0},${s.commissionAmount || 0},${s.netAmount || 0},${(s.packageName||'').replace(/,/g,';')}`);
+      rows.push(
+        `${s.createdAt},${s.grossAmount || 0},${s.commissionAmount || 0},${
+          s.netAmount || 0
+        },${(s.packageName || "").replace(/,/g, ";")}`
+      );
     });
     const csv = rows.join("\n");
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename=owner_${ownerId}_statement.csv`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=owner_${ownerId}_statement.csv`
+    );
     res.send(csv);
   } catch (e) {
     res.status(500).send("Failed to export owner statement");
@@ -562,10 +639,17 @@ router.post("/:ownerId/payout-account", async (req, res) => {
   const resolvedType = accountType || "Mobile Money";
   const resolvedProvider = provider || "MTN";
   try {
-    const payload = { accountType: resolvedType, provider: resolvedProvider, updatedAt: new Date().toISOString() };
+    const payload = {
+      accountType: resolvedType,
+      provider: resolvedProvider,
+      updatedAt: new Date().toISOString(),
+    };
     if (accountNumber) payload.accountNumber = accountNumber;
     if (accountName) payload.accountName = accountName;
-    await db.collection("owner_payout_accounts").doc(ownerId).set(payload, { merge: true });
+    await db
+      .collection("owner_payout_accounts")
+      .doc(ownerId)
+      .set(payload, { merge: true });
     return res.json({ success: true });
   } catch (e) {
     return res.status(500).json({ message: "Failed to save payout account" });
@@ -574,142 +658,97 @@ router.post("/:ownerId/payout-account", async (req, res) => {
 
 module.exports = router;
 
-
-
 // Get Logo & Owner Name by Owner ID
 
 router.get("/logo/:ownerId", async (req, res) => {
-
   try {
-
     const ownerId = req.params.ownerId;
 
     const doc = await db.collection("owners").doc(ownerId).get();
 
-
-
     if (!doc.exists) {
-
       return res.status(404).json({ error: "Owner not found" });
-
     }
-
-
 
     const data = doc.data();
 
-      res.json({
+    res.json({
+      logoUrl: data.logoUrl || null,
 
-    logoUrl: data.logoUrl || null,
+      ownerName: data.ownerName || "",
 
-    ownerName: data.ownerName || "",
+      ownerPhone: data.ownerPhone || "",
 
-    ownerPhone: data.ownerPhone || "",
-
-    ownerWhatsapp: data.ownerWhatsapp || "",
-
-  });
-
+      ownerWhatsapp: data.ownerWhatsapp || "",
+    });
   } catch (error) {
-
     console.error(error);
 
     res.status(500).json({ error: "Server error" });
-
   }
-
 });
 
-
-
 // --- WALLET ENDPOINTS ---
-
-
 
 // Get wallet balance
 
 router.get("/:ownerId/wallet/balance", async (req, res) => {
-
   const { ownerId } = req.params;
 
   try {
-
     const walletRef = db.collection("wallets").doc(ownerId);
 
     const doc = await walletRef.get();
 
     if (!doc.exists) {
-
       // Create wallet if not exists
 
       await walletRef.set({ ownerId, balance: 0, transactions: [] });
 
       return res.json({ balance: 0 });
-
     }
 
     return res.json({ balance: doc.data().balance || 0 });
-
   } catch (err) {
-
     res.status(500).json({ error: "Failed to fetch wallet balance" });
-
   }
-
 });
-
-
 
 // Get wallet transaction history
 
 router.get("/:ownerId/wallet/transactions", async (req, res) => {
-
   const { ownerId } = req.params;
 
   try {
-
     const walletRef = db.collection("wallets").doc(ownerId);
 
     const doc = await walletRef.get();
 
     if (!doc.exists) {
-
       return res.json({ transactions: [] });
-
     }
 
     return res.json({ transactions: doc.data().transactions || [] });
-
   } catch (err) {
-
     res.status(500).json({ error: "Failed to fetch wallet transactions" });
-
   }
-
 });
-
-
 
 // Request withdrawal
 
 router.post("/:ownerId/wallet/withdraw", async (req, res) => {
-
   const { ownerId } = req.params;
 
   const { amount, mobileMoneyNumber, provider } = req.body; // provider: 'mtn' or 'airtel'
 
   if (!amount || amount <= 0 || !mobileMoneyNumber) {
-
     return res.status(400).json({ error: "Invalid withdrawal request" });
-
   }
 
   try {
-
     const walletRef = db.collection("wallets").doc(ownerId);
 
     await db.runTransaction(async (transaction) => {
-
       const doc = await transaction.get(walletRef);
 
       if (!doc.exists) throw new Error("Wallet not found");
@@ -721,19 +760,19 @@ router.post("/:ownerId/wallet/withdraw", async (req, res) => {
       // Deduct balance
 
       transaction.update(walletRef, {
-
         balance: (data.balance || 0) - amount,
 
         transactions: [
+          {
+            type: "withdrawal",
+            amount,
+            date: new Date().toISOString(),
+            description: `Withdrawal to ${mobileMoneyNumber}`,
+          },
 
-          { type: "withdrawal", amount, date: new Date().toISOString(), description: `Withdrawal to ${mobileMoneyNumber}` },
-
-          ...(data.transactions || [])
-
-        ].slice(0, 100) // keep last 100
-
+          ...(data.transactions || []),
+        ].slice(0, 100), // keep last 100
       });
-
     });
 
     // --- MTN MoMo payout integration ---
@@ -742,39 +781,32 @@ router.post("/:ownerId/wallet/withdraw", async (req, res) => {
       // Get access token
 
       const tokenRes = await axios.post(
-
         `${process.env.MTN_BASE_URL}/disbursement/token/`,
 
         null,
 
         {
-
           headers: {
-
-            "Ocp-Apim-Subscription-Key": process.env.MTN_PRIMARY_KEY
-
+            "Ocp-Apim-Subscription-Key": process.env.MTN_PRIMARY_KEY,
           },
 
           auth: {
-
             username: process.env.MTN_API_USER,
 
-            password: process.env.MTN_API_KEY
-
-          }
-
+            password: process.env.MTN_API_KEY,
+          },
         }
-
       );
 
       const accessToken = tokenRes.data.access_token;
 
       // Prepare payout payload
 
-      const externalId = `${process.env.MTN_REFERENCE_ID || 'withdrawal'}-${ownerId}-${Date.now()}`;
+      const externalId = `${
+        process.env.MTN_REFERENCE_ID || "withdrawal"
+      }-${ownerId}-${Date.now()}`;
 
       const payoutPayload = {
-
         amount: amount.toString(),
 
         currency: "UGX",
@@ -782,74 +814,71 @@ router.post("/:ownerId/wallet/withdraw", async (req, res) => {
         externalId,
 
         payee: {
-
           partyIdType: "MSISDN",
 
-          partyId: mobileMoneyNumber
-
+          partyId: mobileMoneyNumber,
         },
 
         payerMessage: "Wi-Fi earnings withdrawal",
 
-        payeeNote: "Thank you for using our platform"
-
+        payeeNote: "Thank you for using our platform",
       };
 
       // Send payout request
 
       await axios.post(
-
         `${process.env.MTN_BASE_URL}/disbursement/v1_0/transfer`,
 
         payoutPayload,
 
         {
-
           headers: {
-
             "X-Reference-Id": externalId,
 
             "X-Target-Environment": process.env.MTN_ENV || "sandbox",
 
             "Ocp-Apim-Subscription-Key": process.env.MTN_PRIMARY_KEY,
 
-            "Authorization": `Bearer ${accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
 
-            "Content-Type": "application/json"
-
-          }
-
+            "Content-Type": "application/json",
+          },
         }
-
       );
-
     }
 
     // Non-MTN providers are not supported currently
     res.json({ success: true });
-
   } catch (err) {
-
     res.status(400).json({ error: err.message || "Withdrawal failed" });
-
   }
-
 });
-
 
 // CSV export of owner statements (net earnings)
 router.get("/:ownerId/reports/export/csv", async (req, res) => {
   const { ownerId } = req.params;
   try {
-    const snap = await db.collection("payout_splits").where("ownerId", "==", ownerId).orderBy("createdAt", "desc").limit(1000).get();
-    const rows = ["date,gross,commission,net,packageName"]; 
+    const snap = await db
+      .collection("payout_splits")
+      .where("ownerId", "==", ownerId)
+      .orderBy("createdAt", "desc")
+      .limit(1000)
+      .get();
+    const rows = ["date,gross,commission,net,packageName"];
     snap.docs.forEach((d) => {
       const s = d.data();
-      rows.push(`${s.createdAt},${s.grossAmount || 0},${s.commissionAmount || 0},${s.netAmount || 0},${(s.packageName||'').replace(/,/g,';')}`);
+      rows.push(
+        `${s.createdAt},${s.grossAmount || 0},${s.commissionAmount || 0},${
+          s.netAmount || 0
+        },${(s.packageName || "").replace(/,/g, ";")}`
+      );
     });
     const csv = rows.join("\n");
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename=owner_${ownerId}_statement.csv`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=owner_${ownerId}_statement.csv`
+    );
     res.send(csv);
   } catch (e) {
     res.status(500).send("Failed to export owner statement");
@@ -877,7 +906,11 @@ router.post("/:ownerId/payout-account", async (req, res) => {
   }
   try {
     await db.collection("owner_payout_accounts").doc(ownerId).set({
-      accountType, provider, accountNumber, accountName, updatedAt: new Date().toISOString(),
+      accountType,
+      provider,
+      accountNumber,
+      accountName,
+      updatedAt: new Date().toISOString(),
     });
     return res.json({ success: true });
   } catch (e) {
@@ -885,6 +918,4 @@ router.post("/:ownerId/payout-account", async (req, res) => {
   }
 });
 
-
 module.exports = router;
-

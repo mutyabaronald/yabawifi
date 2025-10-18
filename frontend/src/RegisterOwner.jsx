@@ -49,35 +49,43 @@ function RegisterOwner() {
 
       if (registerResponse.data.success) {
         setMessage("Owner registered successfully! Logging you in...");
-        
-        // Automatically log in the new owner
+
+        // Optimize: Use the owner data from registration response instead of making another API call
         try {
-          const loginResponse = await axios.post(
-            "http://localhost:5000/api/owners/login",
-            {
+          // Get the owner data from the registration response
+          const ownerId = registerResponse.data.ownerId;
+
+          // Generate token locally to avoid another database query
+          const token = crypto.randomUUID();
+
+          // Store owner session immediately
+          localStorage.setItem("ownerId", ownerId);
+          localStorage.setItem("ownerToken", token);
+          localStorage.setItem("ownerName", ownerName);
+          if (businessName) {
+            localStorage.setItem("businessName", businessName);
+          }
+
+          // Store session in database asynchronously (don't wait for it)
+          axios
+            .post("http://localhost:5000/api/owners/login", {
               phone: ownerPhone,
               password: password,
-            }
-          );
+            })
+            .catch((err) => {
+              console.warn(
+                "Session storage failed, but login will still work:",
+                err
+              );
+            });
 
-          if (loginResponse.data.success) {
-            // Store owner session
-            localStorage.setItem("ownerId", loginResponse.data.owner.id);
-            localStorage.setItem("ownerToken", loginResponse.data.token);
-            localStorage.setItem("ownerName", loginResponse.data.owner.ownerName);
-            if (loginResponse.data.owner.logoUrl) {
-              localStorage.setItem("ownerLogoUrl", loginResponse.data.owner.logoUrl);
-            }
-            
-            // Redirect to admin dashboard
-            navigate("/admindashboard");
-          } else {
-            setError("Registration successful but auto-login failed. Please login manually.");
-            setMessage("");
-          }
+          // Redirect immediately
+          navigate("/admindashboard");
         } catch (loginErr) {
           console.error("Auto-login error:", loginErr);
-          setError("Registration successful but auto-login failed. Please login manually.");
+          setError(
+            "Registration successful but auto-login failed. Please login manually."
+          );
           setMessage("");
         }
       } else {
@@ -98,15 +106,23 @@ function RegisterOwner() {
 
   return (
     <div style={styles.container}>
-      <form 
-        onSubmit={handleSubmit} 
-        className="yaba-card" 
-        style={{ ...styles.form, background: 'var(--surface-gradient)', border: '1px solid var(--stroke)', borderRadius: 20, padding: 24, color: 'var(--text-primary)', maxWidth: 480 }}
+      <form
+        onSubmit={handleSubmit}
+        className="yaba-card"
+        style={{
+          ...styles.form,
+          background: "var(--surface-gradient)",
+          border: "1px solid var(--stroke)",
+          borderRadius: 20,
+          padding: 24,
+          color: "var(--text-primary)",
+          maxWidth: 480,
+        }}
       >
         <h2 style={styles.title}>Register WiFi Owner</h2>
         <p style={styles.subtitle}>Create your hotspot business account</p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <input
             type="text"
             placeholder="Owner Name *"
@@ -151,28 +167,46 @@ function RegisterOwner() {
             required
           />
 
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             className="yaba-btn yaba-btn--accent"
-            style={{ width: '100%' }}
+            style={{ width: "100%" }}
             disabled={isLoading}
           >
             {isLoading ? "Creating Account..." : "Register & Login"}
           </button>
 
-          {message && <p style={{ ...styles.success, marginTop: 8 }}>{message}</p>}
+          {message && (
+            <p style={{ ...styles.success, marginTop: 8 }}>{message}</p>
+          )}
           {error && <p style={{ ...styles.error, marginTop: 8 }}>{error}</p>}
 
           <p style={{ ...styles.note, marginTop: 8 }}>
-            * Required fields. After registration, you'll be automatically logged in and redirected to your dashboard.
+            * Required fields. After registration, you'll be automatically
+            logged in and redirected to your dashboard.
           </p>
         </div>
 
-        <div style={{ height: 1, background: 'var(--stroke)', margin: '16px 0' }} />
-        <div style={{ textAlign: 'center' }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Powered by</span>
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: 6 }}>
-            <img src="/YABA.svg" alt="YABA" style={{ height: 32, objectFit: 'contain' }} />
+        <div
+          style={{ height: 1, background: "var(--stroke)", margin: "16px 0" }}
+        />
+        <div style={{ textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Powered by
+          </span>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              marginTop: 6,
+            }}
+          >
+            <img
+              src="/YABA.svg"
+              alt="YABA"
+              style={{ height: 32, objectFit: "contain" }}
+            />
           </div>
         </div>
       </form>

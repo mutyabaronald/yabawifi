@@ -41,7 +41,9 @@ function Login() {
     const fetchByContext = async () => {
       try {
         if (routerId) {
-          const res = await fetch(`/api/routers/${encodeURIComponent(routerId)}/portal-branding`);
+          const res = await fetch(
+            `/api/routers/${encodeURIComponent(routerId)}/portal-branding`
+          );
           if (res.ok) {
             const json = await res.json();
             setLogoUrl(json.logoUrl || "");
@@ -52,7 +54,9 @@ function Login() {
           }
         }
         if (ownerId) {
-          const res = await fetch(`/api/owners/logo/${encodeURIComponent(ownerId)}`);
+          const res = await fetch(
+            `/api/owners/logo/${encodeURIComponent(ownerId)}`
+          );
           if (res.ok) {
             const json = await res.json();
             setLogoUrl(json.logoUrl || "");
@@ -77,7 +81,6 @@ function Login() {
     }
   }, [location.search]);
 
-
   // Check user location and proximity to hotspot
   const checkUserLocation = async (hotspotId) => {
     try {
@@ -95,13 +98,15 @@ function Login() {
           // Get hotspot location
           const hotspotResponse = await fetch(`/api/hotspots/${hotspotId}`);
           const hotspotData = await hotspotResponse.json();
-          
+
           if (hotspotData.hotspot && hotspotData.hotspot.location) {
             const distance = calculateDistance(
-              userLat, userLng,
-              hotspotData.hotspot.latitude, hotspotData.hotspot.longitude
+              userLat,
+              userLng,
+              hotspotData.hotspot.latitude,
+              hotspotData.hotspot.longitude
             );
-            
+
             // Consider within range if within 100 meters
             setLocationStatus(distance <= 100 ? "in-range" : "out-of-range");
           } else {
@@ -109,13 +114,13 @@ function Login() {
           }
         },
         (error) => {
-          console.error('Error getting location:', error);
+          console.error("Error getting location:", error);
           setLocationStatus("out-of-range");
         },
         { timeout: 10000, enableHighAccuracy: true }
       );
     } catch (error) {
-      console.error('Error checking location:', error);
+      console.error("Error checking location:", error);
       setLocationStatus("out-of-range");
     }
   };
@@ -123,35 +128,43 @@ function Login() {
   // Calculate distance between two coordinates (in meters)
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371e3; // Earth's radius in meters
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
 
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     return R * c; // Distance in meters
   };
 
+  // Debounced phone lookup to avoid excessive API calls
   useEffect(() => {
-    const fetchByPhone = async () => {
+    const timeoutId = setTimeout(async () => {
       if (!phone || phone.length < 4) return;
       try {
-        const q = query(collection(db, "owners"), where("ownerPhone", "==", phone));
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          const data = snapshot.docs[0].data();
-          setLogoUrl(data.logoUrl || "");
-          setOwnerName(data.ownerName || "");
-          setOwnerPhone(data.ownerPhone || "");
-          setOwnerWhatsapp(data.ownerWhatsapp || "");
+        // Use backend API instead of direct Firebase for better performance
+        const response = await fetch(
+          `${
+            import.meta.env.VITE_API_URL || "http://localhost:5000"
+          }/api/owners/by-phone/${encodeURIComponent(phone)}`
+        );
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            setLogoUrl(data.owner.logoUrl || "");
+            setOwnerName(data.owner.ownerName || "");
+            setOwnerPhone(data.owner.ownerPhone || "");
+            setOwnerWhatsapp(data.owner.ownerWhatsapp || "");
+          }
         }
       } catch {}
-    };
-    fetchByPhone();
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timeoutId);
   }, [phone]);
 
   const handleLogin = async () => {
@@ -162,15 +175,20 @@ function Login() {
 
     try {
       setIsLoading(true);
-      
+
       // Use backend API instead of direct Firebase access
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/users/auth`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ phone, password }),
-      });
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/users/auth`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ phone, password }),
+        }
+      );
 
       const data = await response.json();
 
@@ -184,21 +202,20 @@ function Login() {
         if (data.isNewUser) {
           setIsFirstTimeSetup(true);
         }
-        
+
         // Persist phone and navigate to user dashboard
         localStorage.setItem("phone", phone);
-        
-        
+
         // Clear first-time setup flag after a delay
         if (data.isNewUser) {
           setTimeout(() => setIsFirstTimeSetup(false), 3000);
         }
-        
+
         // If not a referral user, set Buy Packages as default tab
         if (!isReferralUser) {
-          localStorage.setItem('activeTab', 'packages');
+          localStorage.setItem("activeTab", "packages");
         }
-        
+
         navigate("/dashboard");
       } else {
         setError(data.error || "Login failed. Please try again.");
@@ -240,7 +257,17 @@ function Login() {
 
   return (
     <div style={styles.container}>
-      <div className="yaba-card" style={{ ...styles.card, background: 'var(--surface-gradient)', border: '1px solid var(--stroke)', borderRadius: 20, padding: 24, color: 'var(--text-primary)' }}>
+      <div
+        className="yaba-card"
+        style={{
+          ...styles.card,
+          background: "var(--surface-gradient)",
+          border: "1px solid var(--stroke)",
+          borderRadius: 20,
+          padding: 24,
+          color: "var(--text-primary)",
+        }}
+      >
         {/* 🔥 NEW: Show owner logo in a round avatar (or placeholder) */}
         {logoUrl ? (
           <img src={logoUrl} alt="WiFi Owner Logo" style={styles.logoImage} />
@@ -255,15 +282,21 @@ function Login() {
         <div style={styles.tabsRow}>
           <button
             onClick={() => setActiveTab("voucher")}
-            className={`yaba-btn ${activeTab === 'voucher' ? 'yaba-btn--accent' : 'yaba-btn--secondary'}`}
-            style={{ width: '50%' }}
+            className={`yaba-btn ${
+              activeTab === "voucher"
+                ? "yaba-btn--accent"
+                : "yaba-btn--secondary"
+            }`}
+            style={{ width: "50%" }}
           >
             Voucher Login
           </button>
           <button
             onClick={() => setActiveTab("user")}
-            className={`yaba-btn ${activeTab === 'user' ? 'yaba-btn--accent' : 'yaba-btn--secondary'}`}
-            style={{ width: '50%' }}
+            className={`yaba-btn ${
+              activeTab === "user" ? "yaba-btn--accent" : "yaba-btn--secondary"
+            }`}
+            style={{ width: "50%" }}
           >
             User Login
           </button>
@@ -271,7 +304,14 @@ function Login() {
 
         {/* Voucher Form */}
         {activeTab === "voucher" && (
-          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div
+            style={{
+              marginTop: 16,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
             <input
               type="text"
               placeholder="Enter Voucher Code"
@@ -279,7 +319,12 @@ function Login() {
               onChange={(e) => setVoucherCode(e.target.value.toUpperCase())}
               className="yaba-input"
             />
-            <button onClick={handleRedeemVoucher} className="yaba-btn yaba-btn--accent" disabled={redeeming} style={{ width: '100%' }}>
+            <button
+              onClick={handleRedeemVoucher}
+              className="yaba-btn yaba-btn--accent"
+              disabled={redeeming}
+              style={{ width: "100%" }}
+            >
               {redeeming ? "Connecting…" : "Connect"}
             </button>
           </div>
@@ -287,7 +332,14 @@ function Login() {
 
         {/* User Form */}
         {activeTab === "user" && (
-          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div
+            style={{
+              marginTop: 16,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
             {/* Referral Code Input - Only show if user came via referral */}
             {isReferralUser && (
               <div style={{ marginBottom: 16 }}>
@@ -296,29 +348,41 @@ function Login() {
                   placeholder="Referral Code"
                   value={referralCode}
                   readOnly
-                  style={{...styles.input, backgroundColor: '#f0f9ff', borderColor: '#3b82f6'}}
+                  style={{
+                    ...styles.input,
+                    backgroundColor: "#f0f9ff",
+                    borderColor: "#3b82f6",
+                  }}
                 />
-                <div style={{ fontSize: 12, color: 'var(--success)', marginTop: 4, textAlign: 'center' }}>
-                  🎉 You're joining with a referral code! You'll get bonus rewards.
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--success)",
+                    marginTop: 4,
+                    textAlign: "center",
+                  }}
+                >
+                  🎉 You're joining with a referral code! You'll get bonus
+                  rewards.
                 </div>
               </div>
             )}
 
             {/* Location Status */}
             {isReferralUser && (
-              <div style={{ marginBottom: 16, textAlign: 'center' }}>
-                {locationStatus === 'checking' && (
-                  <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
+              <div style={{ marginBottom: 16, textAlign: "center" }}>
+                {locationStatus === "checking" && (
+                  <div style={{ fontSize: 14, color: "var(--text-muted)" }}>
                     📍 Checking your location...
                   </div>
                 )}
-                {locationStatus === 'in-range' && (
-                  <div style={{ fontSize: 14, color: 'var(--success)' }}>
+                {locationStatus === "in-range" && (
+                  <div style={{ fontSize: 14, color: "var(--success)" }}>
                     ✅ You're in range! You can connect to this hotspot.
                   </div>
                 )}
-                {locationStatus === 'out-of-range' && (
-                  <div style={{ fontSize: 14, color: 'var(--danger)' }}>
+                {locationStatus === "out-of-range" && (
+                  <div style={{ fontSize: 14, color: "var(--danger)" }}>
                     ⚠️ You're not in range. Please move closer to the hotspot.
                   </div>
                 )}
@@ -332,32 +396,65 @@ function Login() {
               onChange={(e) => setPhone(e.target.value)}
               className="yaba-input"
             />
-            <div style={{ position: 'relative', width: '100%', minWidth: 0, display: 'block', margin: 0, padding: 0 }}>
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                minWidth: 0,
+                display: "block",
+                margin: 0,
+                padding: 0,
+              }}
+            >
               <input
                 type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="yaba-input"
-                style={{ paddingRight: 64, width: '100%', boxSizing: 'border-box', margin: 0 }}
+                style={{
+                  paddingRight: 64,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  margin: 0,
+                }}
                 autoComplete="current-password"
               />
               <button
                 type="button"
-                onClick={() => setShowPassword(p => !p)}
-                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--stroke)', background: 'var(--surface-2)', cursor: 'pointer' }}
+                onClick={() => setShowPassword((p) => !p)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  padding: "6px 8px",
+                  borderRadius: 6,
+                  border: "1px solid var(--stroke)",
+                  background: "var(--surface-2)",
+                  cursor: "pointer",
+                }}
               >
                 {showPassword ? "Hide" : "Show"}
               </button>
             </div>
-            <button onClick={handleLogin} className="yaba-btn yaba-btn--accent" style={{ width: '100%' }}>
+            <button
+              onClick={handleLogin}
+              className="yaba-btn yaba-btn--accent"
+              style={{ width: "100%" }}
+            >
               {isLoading ? "Connecting…" : "Connect"}
             </button>
-            <button onClick={handleForgotPassword} className="yaba-btn yaba-btn--secondary" style={{ width: '100%' }}>
+            <button
+              onClick={handleForgotPassword}
+              className="yaba-btn yaba-btn--secondary"
+              style={{ width: "100%" }}
+            >
               Forgot Password?
             </button>
             <p style={styles.helpText}>
-              💡 New users: Enter your phone number and create a password to get started.
+              💡 New users: Enter your phone number and create a password to get
+              started.
             </p>
           </div>
         )}
@@ -365,7 +462,8 @@ function Login() {
         {error && <p style={styles.error}>{error}</p>}
         {isFirstTimeSetup && (
           <p style={styles.success}>
-            ✅ Welcome! Your account has been created and password set. You're now logged in!
+            ✅ Welcome! Your account has been created and password set. You're
+            now logged in!
           </p>
         )}
 
@@ -375,7 +473,7 @@ function Login() {
             <p style={styles.supportTitle}>Need Help?</p>
             <div style={styles.supportButtons}>
               {ownerPhone && (
-                <button 
+                <button
                   onClick={() => window.open(`tel:${ownerPhone}`)}
                   style={styles.supportBtn}
                 >
@@ -383,8 +481,12 @@ function Login() {
                 </button>
               )}
               {ownerWhatsapp && (
-                <button 
-                  onClick={() => window.open(`https://wa.me/${ownerWhatsapp.replace(/[^0-9]/g, '')}`)}
+                <button
+                  onClick={() =>
+                    window.open(
+                      `https://wa.me/${ownerWhatsapp.replace(/[^0-9]/g, "")}`
+                    )
+                  }
                   style={styles.supportBtn}
                 >
                   💬 WhatsApp
@@ -395,9 +497,7 @@ function Login() {
         )}
 
         {/* Moving Reviews Section - Only show for referral users */}
-        {isReferralUser && hotspotId && (
-          <MovingReviews hotspotId={hotspotId} />
-        )}
+        {isReferralUser && hotspotId && <MovingReviews hotspotId={hotspotId} />}
 
         <div style={styles.poweredBy}>
           <p>Powered by</p>
@@ -575,4 +675,3 @@ const styles = {
 };
 
 export default Login;
-

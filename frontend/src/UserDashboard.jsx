@@ -859,7 +859,16 @@ function UserDashboard() {
 
 
         {activeTab === 'dashboard' && (
-          <>
+          <div style={styles.dashboardContainer}>
+            {/* Debug info - remove in production */}
+            {console.log('Dashboard data:', { 
+              userPhone, 
+              currentSession, 
+              transactions: Array.isArray(transactions) ? transactions.length : 'not array',
+              activePackages: Array.isArray(activePackages) ? activePackages.length : 'not array',
+              loyaltyPoints 
+            })}
+            
             {/* Welcome Banner */}
             <div className="yaba-card" style={styles.welcomeBanner}>
               <div style={styles.welcomeText}>
@@ -1025,7 +1034,7 @@ function UserDashboard() {
               </div>
             </div>
 
-      {activePackages.length > 0 && (
+      {Array.isArray(activePackages) && activePackages.length > 0 && (
         <div className="yaba-card">
           <h3 className="yaba-card-title">Active Packages</h3>
           {activePackages.map((pkg, index) => (
@@ -1055,7 +1064,7 @@ function UserDashboard() {
           </button>
         </div>
         
-        {transactions.length === 0 ? (
+        {(!Array.isArray(transactions) || transactions.length === 0) ? (
           <div style={styles.emptyState}>
             <p className="yaba-muted">No transactions yet</p>
             <button 
@@ -1068,7 +1077,7 @@ function UserDashboard() {
           </div>
         ) : (
           <div style={styles.transactionsList}>
-            {transactions.slice(0, 3).map((transaction, index) => (
+            {(Array.isArray(transactions) ? transactions : []).slice(0, 3).map((transaction, index) => (
               <div key={index} className="yaba-card yaba-elev-2" style={{marginBottom: '12px'}}>
                 <div style={styles.transactionIcon}>
                   {transaction.type === 'points' ? '⭐' : 
@@ -1098,7 +1107,7 @@ function UserDashboard() {
 
 
 
-          </>
+          </div>
         )}
 
         {activeTab === 'hotspots' && (
@@ -1616,6 +1625,12 @@ const styles = {
     border: '1px solid var(--stroke)',
     position: 'relative',
     overflow: 'hidden',
+  },
+  dashboardContainer: {
+    width: '100%',
+    maxWidth: '1200px',
+    margin: '0 auto',
+    padding: '0',
   },
   sectionTitle: {
     fontSize: '18px',

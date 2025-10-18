@@ -248,7 +248,7 @@ function UserDashboard() {
         axios.get(`/api/users/${phone}/loyalty`).catch(() => ({ data: { points: 0 } }))
       ]);
 
-      setTransactions(transactionsRes.data || []);
+      setTransactions(Array.isArray(transactionsRes.data) ? transactionsRes.data : []);
       setActivePackages(packagesRes.data || []);
       setLoyaltyPoints(loyaltyRes.data?.points || 0);
 
@@ -834,7 +834,7 @@ function UserDashboard() {
         {activeTab === 'transactions' && (
           <div style={styles.section}>
             {console.log('Rendering TransactionsSection with transactions:', transactions)}
-            <TransactionsSection transactions={transactions || []} />
+            <TransactionsSection transactions={Array.isArray(transactions) ? transactions : []} />
           </div>
         )}
 

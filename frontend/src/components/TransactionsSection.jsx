@@ -6,20 +6,23 @@ const TransactionsSection = ({ transactions = [] }) => {
   const [sortBy, setSortBy] = useState('date');
   const [filteredTransactions, setFilteredTransactions] = useState([]);
 
+  // Ensure transactions is always an array
+  const safeTransactions = Array.isArray(transactions) ? transactions : [];
+
   // Calculate summary metrics - add safety checks
-  const totalSpent = (transactions || [])
+  const totalSpent = safeTransactions
     .filter(t => t && t.type === 'purchase' && t.amount)
     .reduce((sum, t) => sum + (t.amount || 0), 0);
 
-  const totalSaved = (transactions || [])
+  const totalSaved = safeTransactions
     .filter(t => t && (t.type === 'voucher' || t.type === 'points') && t.originalPrice)
     .reduce((sum, t) => sum + (t.originalPrice || 0), 0);
 
-  const totalTransactions = (transactions || []).length;
+  const totalTransactions = safeTransactions.length;
 
   // Filter and sort transactions
   useEffect(() => {
-    let filtered = [...(transactions || [])];
+    let filtered = [...safeTransactions];
 
     // Apply filter
     if (filterType !== 'all') {
@@ -39,7 +42,7 @@ const TransactionsSection = ({ transactions = [] }) => {
     });
 
     setFilteredTransactions(filtered);
-  }, [transactions, filterType, sortBy]);
+  }, [safeTransactions, filterType, sortBy]);
 
   const formatCurrency = (amount) => {
     if (!amount) return formatUGX(0);
@@ -223,7 +226,7 @@ const TransactionsSection = ({ transactions = [] }) => {
           </div>
         ) : (
           <div style={styles.transactionsList}>
-            {filteredTransactions.map((transaction, index) => (
+            {(Array.isArray(filteredTransactions) ? filteredTransactions : []).map((transaction, index) => (
               <div key={transaction.id || index} style={styles.transactionItem}>
                 <div style={styles.transactionIcon}>
                   {getTransactionIcon(transaction)}

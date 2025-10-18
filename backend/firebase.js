@@ -4,7 +4,12 @@ const admin = require("firebase-admin");
 // Use environment variables for production, fallback to serviceAccountKey.json for development
 let serviceAccount;
 
-if (process.env.NODE_ENV === "production") {
+// Check if we have all required environment variables for production
+const hasAllEnvVars = process.env.FIREBASE_PRIVATE_KEY && 
+                     process.env.FIREBASE_PROJECT_ID && 
+                     process.env.FIREBASE_CLIENT_EMAIL;
+
+if (process.env.NODE_ENV === "production" && hasAllEnvVars) {
   // Production: use environment variables
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n") // Replace literal \n with actual newlines
     ?.replace(/"/g, ""); // Remove any quotes
@@ -25,14 +30,25 @@ if (process.env.NODE_ENV === "production") {
   };
 } else {
   // Development: use local serviceAccountKey.json
-  serviceAccount = require("./serviceAccountKey.json");
+  try {
+    serviceAccount = require("./serviceAccountKey.json");
+    console.log("Using local serviceAccountKey.json for Firebase configuration");
+  } catch (error) {
+    console.error("Error loading serviceAccountKey.json:", error.message);
+    throw new Error("Firebase service account key not found. Please ensure serviceAccountKey.json exists in the backend directory.");
+  }
 }
 
 if (!admin.apps.length) {
+  console.log("Initializing Firebase with project ID:", serviceAccount.project_id);
+  console.log("Service account has private_key:", !!serviceAccount.private_key);
+  
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     projectId: serviceAccount.project_id,
   });
+  
+  console.log("Firebase initialized successfully");
 }
 
 const db = admin.firestore();

@@ -119,7 +119,7 @@ function RegisterOwner() {
           maxWidth: 480,
         }}
       >
-        {/* YABAnect branding header */}
+        {/* Branding header */}
         <div style={{ marginBottom: 18, textAlign: "center" }}>
           <img
             src="/YABA.svg"
@@ -166,7 +166,7 @@ function RegisterOwner() {
               opacity: 0.94,
             }}
           >
-            Create your hotspot business account
+            Manage Your Wifi Business
           </div>
         </div>
 

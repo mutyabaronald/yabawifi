@@ -119,6 +119,28 @@ function RegisterOwner() {
           maxWidth: 480,
         }}
       >
+        {/* Back button */}
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            background: "var(--surface-2)",
+            border: "1px solid var(--stroke)",
+            color: "var(--text-primary)",
+            borderRadius: 10,
+            padding: "6px 10px",
+            cursor: "pointer",
+            marginBottom: 12,
+          }}
+          aria-label="Go back"
+        >
+          <span style={{ fontSize: 16 }}>←</span>
+          <span style={{ fontWeight: 600 }}>Back</span>
+        </button>
+
         {/* Branding header */}
         <div style={{ marginBottom: 18, textAlign: "center" }}>
           <img

@@ -257,6 +257,8 @@ function Login() {
 
   return (
     <div style={styles.container}>
+      {/* Remove all branding from above. Branding is now inside the login card. */}
+
       <div
         className="yaba-card"
         style={{
@@ -268,17 +270,91 @@ function Login() {
           color: "var(--text-primary)",
         }}
       >
-        {/* 🔥 NEW: Show owner logo in a round avatar (or placeholder) */}
-        {logoUrl ? (
-          <img src={logoUrl} alt="WiFi Owner Logo" style={styles.logoImage} />
+        {/* CARD HEADER: YABA fallback if no logo or hotspotId, else show logo & hotspot name */}
+        {logoUrl || ownerName ? (
+          <div style={{ marginBottom: 18 }}>
+            {logoUrl ? (
+              <img src={logoUrl} alt="Business Logo" style={styles.logoImage} />
+            ) : (
+              <div
+                style={{ ...styles.logoPlaceholder, position: "relative" }}
+                aria-label="Business Logo"
+              >
+                <span
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    top: 18,
+                    fontWeight: 700,
+                    fontSize: 34,
+                    color: "#fff",
+                    textAlign: "center",
+                    letterSpacing: "2px",
+                  }}
+                >
+                  {(ownerName || "W").slice(0, 1).toUpperCase()}
+                </span>
+                <span
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: 13,
+                    fontSize: 13,
+                    color: "#2563eb",
+                    fontWeight: 800,
+                    textAlign: "center",
+                    letterSpacing: "1.8px",
+                    textShadow: "0 2px 8px rgba(0,0,0,0.10)",
+                  }}
+                >
+                  YABA CARD
+                </span>
+              </div>
+            )}
+            <div
+              style={{
+                fontWeight: 700,
+                fontSize: 20,
+                marginTop: 7,
+                marginBottom: 0,
+                color: "#2563eb",
+                textAlign: "center",
+                letterSpacing: ".5px",
+              }}
+            >
+              {ownerName}
+            </div>
+          </div>
         ) : (
-          <div style={styles.logoPlaceholder} aria-label="WiFi Owner Logo">
-            {(ownerName || "WiFi").slice(0, 1).toUpperCase()}
+          <div style={{ marginBottom: 18 }}>
+            <img src="/YABA.svg" alt="YABA Logo" style={styles.logoImage} />
+            <h1
+              style={{
+                ...styles.yabaBrandName,
+                color: "#2563eb",
+                fontSize: 28,
+                margin: 0,
+              }}
+            >
+              YABAnect
+            </h1>
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 500,
+                color: "#64748b",
+                margin: "4px 0 0 0",
+              }}
+            >
+              Connect. Experience. Belong.
+            </div>
           </div>
         )}
 
         {/* Tabs */}
-        <h1 style={styles.title}>Welcome</h1>
+        {/* Removed the word 'Welcome' per request */}
         <div style={styles.tabsRow}>
           <button
             onClick={() => setActiveTab("voucher")}
@@ -514,10 +590,44 @@ const styles = {
   container: {
     minHeight: "100vh",
     display: "flex",
+    flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
     background: "linear-gradient(to right, #2563eb, #1e3a8a)",
     padding: "20px",
+  },
+  yabaHeader: {
+    marginBottom: "30px",
+    textAlign: "center",
+  },
+  yabaBranding: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "12px",
+  },
+  yabaHeaderLogo: {
+    height: "60px",
+    width: "60px",
+    objectFit: "contain",
+    filter: "brightness(0) invert(1)", // Make logo white
+  },
+  yabaBrandText: {
+    textAlign: "center",
+  },
+  yabaBrandName: {
+    fontSize: "32px",
+    fontWeight: "bold",
+    color: "#ffffff",
+    margin: "0 0 8px 0",
+    textShadow: "0 2px 4px rgba(0,0,0,0.3)",
+  },
+  yabaTagline: {
+    fontSize: "16px",
+    color: "#e2e8f0",
+    margin: "0",
+    fontWeight: "500",
+    textShadow: "0 1px 2px rgba(0,0,0,0.3)",
   },
   card: {
     background: "#fff",
@@ -622,8 +732,8 @@ const styles = {
     height: "96px",
     objectFit: "cover",
     borderRadius: "50%",
-    border: "3px solid #e5e7eb",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+    border: "none",
+    boxShadow: "none",
     margin: "0 auto 15px auto",
     display: "block",
   },
@@ -637,10 +747,10 @@ const styles = {
     justifyContent: "center",
     fontWeight: "bold",
     color: "#fff",
-    background:
-      "linear-gradient(135deg, rgba(37,99,235,1) 0%, rgba(30,58,138,1) 100%)",
+    background: "linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)",
     boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
     fontSize: "28px",
+    border: "none",
   },
   supportSection: {
     marginTop: "20px",

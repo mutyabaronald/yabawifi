@@ -12,71 +12,79 @@ function AdminLogin() {
   const [isLoading, setIsLoading] = useState(false);
   const [stats, setStats] = useState({
     reviews: { total: 0, rating: 0, stars: "☆☆☆☆☆" },
-    dailyUsers: 0
+    dailyUsers: 0,
   });
   const [contactInfo, setContactInfo] = useState({
     phone: "07xxxxxxxxxx",
     whatsapp: "07xxxxxxxxxx",
-    email: "ronaldmutyaba256@gmail.com"
+    email: "ronaldmutyaba256@gmail.com",
   });
 
   // Build a WhatsApp deeplink using international format
   const buildWhatsAppLink = (rawNumber) => {
     if (!rawNumber) return "#";
-    const defaultCountry = (import.meta?.env?.VITE_DEFAULT_COUNTRY_CODE || "256").replace(/\D/g, "");
+    const defaultCountry = (
+      import.meta?.env?.VITE_DEFAULT_COUNTRY_CODE || "256"
+    ).replace(/\D/g, "");
     let digits = String(rawNumber).replace(/\D/g, "");
     if (digits.startsWith("0")) {
       digits = `${defaultCountry}${digits.slice(1)}`;
     }
     // Prefilled message
-    const message = encodeURIComponent("Hello, I need help with my Wifi owner account.");
+    const message = encodeURIComponent(
+      "Hello, I need help with my Wifi owner account."
+    );
     return `https://wa.me/${digits}?text=${message}`;
   };
 
   // Fetch statistics and contact information on component mount
   useEffect(() => {
     let isMounted = true;
-    
+
     const fetchData = async () => {
       try {
         console.log("Fetching data from API...");
-        const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+        const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
         const [reviewsRes, usersRes, contactRes] = await Promise.all([
           fetch(`${apiBase}/api/statistics/reviews`, {
             headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
           }),
           fetch(`${apiBase}/api/statistics/daily-users`, {
             headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
           }),
           fetch(`${apiBase}/api/super/contact-info`, {
             headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
-          })
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
+          }),
         ]);
-        
+
         if (!isMounted) return;
-        
+
         if (reviewsRes.ok) {
           const reviewsData = await reviewsRes.json();
           console.log("Reviews data received:", reviewsData);
           if (isMounted) {
-            setStats(prev => ({ ...prev, reviews: reviewsData }));
+            setStats((prev) => ({ ...prev, reviews: reviewsData }));
           }
         }
-        
+
         if (usersRes.ok) {
           const usersData = await usersRes.json();
           console.log("Daily users data received:", usersData);
-          if (usersData && typeof usersData.dailyUsers === 'number' && isMounted) {
-            setStats(prev => ({ ...prev, dailyUsers: usersData.dailyUsers }));
+          if (
+            usersData &&
+            typeof usersData.dailyUsers === "number" &&
+            isMounted
+          ) {
+            setStats((prev) => ({ ...prev, dailyUsers: usersData.dailyUsers }));
           } else {
             console.log("Invalid daily users data structure:", usersData);
           }
@@ -92,17 +100,20 @@ function AdminLogin() {
       } catch (err) {
         // Filter out browser extension errors that don't affect our app
         if (isExtensionError(err)) {
-          console.warn("Browser extension communication error (ignored):", err.message);
+          console.warn(
+            "Browser extension communication error (ignored):",
+            err.message
+          );
           return; // Don't treat extension errors as app errors
         }
-        
+
         console.error("Failed to fetch data:", err);
         console.log("Using default data (0 values and default contact info)");
       }
     };
-    
+
     fetchData();
-    
+
     return () => {
       isMounted = false;
     };
@@ -119,8 +130,8 @@ function AdminLogin() {
 
     try {
       console.log("Attempting login with phone:", phone);
-      
-      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
       const res = await fetch(`${apiBase}/api/owners/login`, {
         method: "POST",
         headers: {
@@ -143,7 +154,7 @@ function AdminLogin() {
         console.log("Owner ID:", data.owner.id);
         console.log("Token:", data.token);
         console.log("Owner Name:", data.owner.ownerName);
-        
+
         // Store owner session
         localStorage.setItem("ownerId", data.owner.id);
         localStorage.setItem("ownerToken", data.token);
@@ -154,7 +165,7 @@ function AdminLogin() {
         if (data.owner.ownerPhone) {
           localStorage.setItem("ownerPhone", data.owner.ownerPhone);
         }
-        
+
         console.log("Session stored, navigating to dashboard...");
         navigate("/admindashboard");
       } else {
@@ -176,11 +187,69 @@ function AdminLogin() {
     <div style={styles.container} className="admin-login-container">
       {/* Main Login Section */}
       <div style={styles.loginContainer}>
-        <div className="yaba-card" style={{ ...styles.singleCard, background: 'var(--surface-gradient)', border: '1px solid var(--stroke)', borderRadius: 20, padding: 24, color: 'var(--text-primary)' }}>
-          <h1 style={styles.title}>Wifi Owner Login</h1>
-          <p style={styles.subtitle}>Manage your Wifi business</p>
+        <div
+          className="yaba-card"
+          style={{
+            ...styles.singleCard,
+            background: "var(--surface-gradient)",
+            border: "1px solid var(--stroke)",
+            borderRadius: 20,
+            padding: 24,
+            color: "var(--text-primary)",
+          }}
+        >
+          {/* YABAnect branding like user login */}
+          <div style={{ marginBottom: 18, textAlign: "center" }}>
+            <img
+              src="/YABA.svg"
+              alt="YABA Logo"
+              style={{
+                width: 96,
+                height: 96,
+                objectFit: "cover",
+                borderRadius: "50%",
+                border: "none",
+                boxShadow: "none",
+                margin: "0 auto 15px",
+                display: "block",
+              }}
+            />
+            <h1
+              style={{
+                fontSize: 28,
+                fontWeight: "bold",
+                color: "rgb(37,99,235)",
+                margin: 0,
+                textShadow: "rgba(0,0,0,0.3) 0px 2px 4px",
+                fontFamily: "system-ui, -apple-system, sans-serif",
+              }}
+            >
+              YABAnect
+            </h1>
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 500,
+                color: "rgb(100,116,139)",
+                margin: "4px 0 0 0",
+              }}
+            >
+              Connect. Experience. Belong.
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 400,
+                color: "#6b7280",
+                margin: "8px 0 0 0",
+                opacity: 0.94,
+              }}
+            >
+              Manage Your Wifi Business
+            </div>
+          </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <input
               type="text"
               placeholder="Email, phone"
@@ -188,46 +257,78 @@ function AdminLogin() {
               onChange={(e) => setPhone(e.target.value)}
               className="yaba-input"
             />
-            <div style={{ position: 'relative', width: '100%', minWidth: 0, display: 'block', margin: 0, padding: 0 }}>
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                minWidth: 0,
+                display: "block",
+                margin: 0,
+                padding: 0,
+              }}
+            >
               <input
                 type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="yaba-input"
-                style={{ paddingRight: 64, width: '100%', boxSizing: 'border-box', margin: 0 }}
+                style={{
+                  paddingRight: 64,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  margin: 0,
+                }}
                 autoComplete="current-password"
               />
               <button
                 type="button"
-                onClick={() => setShowPassword(p => !p)}
-                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--stroke)', background: 'var(--surface-2)', cursor: 'pointer' }}
+                onClick={() => setShowPassword((p) => !p)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  padding: "6px 8px",
+                  borderRadius: 6,
+                  border: "1px solid var(--stroke)",
+                  background: "var(--surface-2)",
+                  cursor: "pointer",
+                }}
               >
                 {showPassword ? "Hide" : "Show"}
               </button>
             </div>
 
             <div style={styles.forgotPassword}>
-              <a href="#" style={styles.forgotLink}>Forgot Password?</a>
+              <a href="#" style={styles.forgotLink}>
+                Forgot Password?
+              </a>
             </div>
 
-            <button 
-              onClick={handleLogin} 
+            <button
+              onClick={handleLogin}
               className="yaba-btn yaba-btn--accent"
-              style={{ width: '100%' }}
+              style={{ width: "100%" }}
               disabled={isLoading}
             >
               {isLoading ? "Logging in..." : "Login"}
             </button>
 
-            <button onClick={handleRegister} className="yaba-btn yaba-btn--secondary" style={{ width: '100%' }}>
+            <button
+              onClick={handleRegister}
+              className="yaba-btn yaba-btn--secondary"
+              style={{ width: "100%" }}
+            >
               New Owner? Registered Here
             </button>
 
             {error && <p style={styles.error}>{error}</p>}
           </div>
 
-          <div style={{ height: 1, background: 'var(--stroke)', margin: '20px 0' }} />
+          <div
+            style={{ height: 1, background: "var(--stroke)", margin: "20px 0" }}
+          />
 
           {/* Support Section inside card */}
           <div style={{ ...styles.supportSection, marginBottom: 0 }}>
@@ -235,12 +336,23 @@ function AdminLogin() {
             <div style={styles.contactInfo}>
               <a
                 href={`tel:${contactInfo.phone}`}
-                style={{ ...styles.contactItem, textDecoration: 'none' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-3)'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.08)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-2)'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+                style={{ ...styles.contactItem, textDecoration: "none" }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--surface-3)";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                  e.currentTarget.style.boxShadow =
+                    "0 2px 6px rgba(0,0,0,0.08)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--surface-2)";
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
               >
                 <div style={styles.contactLeft}>
-                  <span aria-hidden style={styles.contactIcon}>📞</span>
+                  <span aria-hidden style={styles.contactIcon}>
+                    📞
+                  </span>
                   <span style={styles.contactLabel}>Call</span>
                 </div>
                 <span style={styles.contactValue}>{contactInfo.phone}</span>
@@ -250,12 +362,23 @@ function AdminLogin() {
                 href={buildWhatsAppLink(contactInfo.whatsapp)}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ ...styles.contactItem, textDecoration: 'none' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-3)'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.08)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-2)'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+                style={{ ...styles.contactItem, textDecoration: "none" }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--surface-3)";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                  e.currentTarget.style.boxShadow =
+                    "0 2px 6px rgba(0,0,0,0.08)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--surface-2)";
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
               >
                 <div style={styles.contactLeft}>
-                  <span aria-hidden style={styles.contactIcon}>💬</span>
+                  <span aria-hidden style={styles.contactIcon}>
+                    💬
+                  </span>
                   <span style={styles.contactLabel}>WhatsApp</span>
                 </div>
                 <span style={styles.contactValue}>{contactInfo.whatsapp}</span>
@@ -263,12 +386,23 @@ function AdminLogin() {
 
               <a
                 href={`mailto:${contactInfo.email}`}
-                style={{ ...styles.contactItem, textDecoration: 'none' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-3)'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.08)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-2)'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+                style={{ ...styles.contactItem, textDecoration: "none" }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--surface-3)";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                  e.currentTarget.style.boxShadow =
+                    "0 2px 6px rgba(0,0,0,0.08)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--surface-2)";
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
               >
                 <div style={styles.contactLeft}>
-                  <span aria-hidden style={styles.contactIcon}>✉️</span>
+                  <span aria-hidden style={styles.contactIcon}>
+                    ✉️
+                  </span>
                   <span style={styles.contactLabel}>Email</span>
                 </div>
                 <span style={styles.contactValue}>{contactInfo.email}</span>
@@ -277,27 +411,46 @@ function AdminLogin() {
           </div>
 
           {/* Privacy Policy inside card */}
-          <div style={{ ...styles.privacySection, marginBottom: 0, marginTop: 10 }}>
+          <div
+            style={{ ...styles.privacySection, marginBottom: 0, marginTop: 10 }}
+          >
             <p style={styles.privacyText}>
               We take your privacy seriously.{" "}
-              <a href="#" style={styles.privacyLink}>Privacy Policy</a>
+              <a href="#" style={styles.privacyLink}>
+                Privacy Policy
+              </a>
             </p>
           </div>
 
-          <div style={{ height: 1, background: 'var(--stroke)', margin: '16px 0' }} />
-          <div style={{ textAlign: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Powered by</span>
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: 6 }}>
-              <img src="/YABA.svg" alt="YABA" style={{ height: 32, objectFit: 'contain' }} />
+          <div
+            style={{ height: 1, background: "var(--stroke)", margin: "16px 0" }}
+          />
+          <div style={{ textAlign: "center" }}>
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Powered by
+            </span>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                marginTop: 6,
+              }}
+            >
+              <img
+                src="/YABA.svg"
+                alt="YABA"
+                style={{ height: 32, objectFit: "contain" }}
+              />
             </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+            <div
+              style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}
+            >
               © 2025 YABAnect. All rights reserved.
             </div>
           </div>
         </div>
       </div>
-
-      
     </div>
   );
 }
@@ -373,8 +526,8 @@ const styles = {
   singleCard: {
     width: "100%",
     maxWidth: 480,
-    display: 'flex',
-    flexDirection: 'column',
+    display: "flex",
+    flexDirection: "column",
     gap: 12,
   },
   title: {
@@ -472,7 +625,7 @@ const styles = {
     borderRadius: 12,
     padding: "10px 12px",
   },
-  contactLeft: { display: 'flex', alignItems: 'center', gap: 8 },
+  contactLeft: { display: "flex", alignItems: "center", gap: 8 },
   contactIcon: { fontSize: 16 },
   contactLabel: {
     color: "var(--text-muted)",

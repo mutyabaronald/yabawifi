@@ -10,6 +10,10 @@ function AdminLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotPhone, setForgotPhone] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState("");
   const [stats, setStats] = useState({
     reviews: { total: 0, rating: 0, stars: "☆☆☆☆☆" },
     dailyUsers: 0,
@@ -40,7 +44,7 @@ function AdminLogin() {
   // Fetch statistics and contact information on component mount
   useEffect(() => {
     let isMounted = true;
-
+    
     const fetchData = async () => {
       try {
         console.log("Fetching data from API...");
@@ -65,9 +69,9 @@ function AdminLogin() {
             },
           }),
         ]);
-
+        
         if (!isMounted) return;
-
+        
         if (reviewsRes.ok) {
           const reviewsData = await reviewsRes.json();
           console.log("Reviews data received:", reviewsData);
@@ -75,7 +79,7 @@ function AdminLogin() {
             setStats((prev) => ({ ...prev, reviews: reviewsData }));
           }
         }
-
+        
         if (usersRes.ok) {
           const usersData = await usersRes.json();
           console.log("Daily users data received:", usersData);
@@ -106,14 +110,14 @@ function AdminLogin() {
           );
           return; // Don't treat extension errors as app errors
         }
-
+        
         console.error("Failed to fetch data:", err);
         console.log("Using default data (0 values and default contact info)");
       }
     };
-
+    
     fetchData();
-
+    
     return () => {
       isMounted = false;
     };
@@ -130,7 +134,7 @@ function AdminLogin() {
 
     try {
       console.log("Attempting login with phone:", phone);
-
+      
       const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
       const res = await fetch(`${apiBase}/api/owners/login`, {
         method: "POST",
@@ -154,7 +158,7 @@ function AdminLogin() {
         console.log("Owner ID:", data.owner.id);
         console.log("Token:", data.token);
         console.log("Owner Name:", data.owner.ownerName);
-
+        
         // Store owner session
         localStorage.setItem("ownerId", data.owner.id);
         localStorage.setItem("ownerToken", data.token);
@@ -165,7 +169,7 @@ function AdminLogin() {
         if (data.owner.ownerPhone) {
           localStorage.setItem("ownerPhone", data.owner.ownerPhone);
         }
-
+        
         console.log("Session stored, navigating to dashboard...");
         navigate("/admindashboard");
       } else {
@@ -181,6 +185,40 @@ function AdminLogin() {
 
   const handleRegister = () => {
     navigate("/register-owner");
+  };
+
+  const toggleForgot = () => {
+    setShowForgot((v) => !v);
+    setForgotMessage("");
+  };
+
+  const submitForgotPassword = async () => {
+    if (!forgotPhone) {
+      setForgotMessage("Please enter your phone or email.");
+      return;
+    }
+    try {
+      setForgotLoading(true);
+      setForgotMessage("");
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
+      const res = await fetch(`${apiBase}/api/owners/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier: forgotPhone }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setForgotMessage(data.message || "Failed to send reset code.");
+        return;
+      }
+      setForgotMessage(
+        data.message || "✅ Reset instructions sent. Check your phone/email."
+      );
+    } catch (e) {
+      setForgotMessage("Network error. Please try again.");
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   return (
@@ -301,13 +339,23 @@ function AdminLogin() {
             </div>
 
             <div style={styles.forgotPassword}>
-              <a href="#" style={styles.forgotLink}>
+              <button type="button" onClick={toggleForgot} style={{ ...styles.forgotLink, background: 'transparent', border: 'none', cursor: 'pointer' }}>
                 Forgot Password?
-              </a>
+              </button>
             </div>
+            {showForgot && (
+              <div className="yaba-card" style={{ marginTop: 8, padding: 12, border: '1px solid var(--stroke)', borderRadius: 12, textAlign: 'left' }}>
+                <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Enter phone or email to receive reset instructions</label>
+                <input type="text" placeholder="Phone or Email" value={forgotPhone} onChange={(e) => setForgotPhone(e.target.value)} className="yaba-input" style={{ marginTop: 6 }} />
+                <button onClick={submitForgotPassword} className="yaba-btn yaba-btn--accent" style={{ width: '100%' }} disabled={forgotLoading}>
+                  {forgotLoading ? 'Sending…' : 'Send Reset Link'}
+                </button>
+                {forgotMessage && (<div style={{ fontSize: 12, marginTop: 6 }}>{forgotMessage}</div>)}
+              </div>
+            )}
 
-            <button
-              onClick={handleLogin}
+            <button 
+              onClick={handleLogin} 
               className="yaba-btn yaba-btn--accent"
               style={{ width: "100%" }}
               disabled={isLoading}

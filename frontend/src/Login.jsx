@@ -12,6 +12,10 @@ function Login() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isFirstTimeSetup, setIsFirstTimeSetup] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotPhone, setForgotPhone] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState("");
 
   // 🔥 NEW: logo state
   const [logoUrl, setLogoUrl] = useState("");
@@ -252,7 +256,37 @@ function Login() {
   };
 
   const handleForgotPassword = () => {
-    alert("Forgot password feature coming soon. You’ll receive a reset code.");
+    setShowForgot((v) => !v);
+    setForgotMessage("");
+  };
+
+  const submitForgotPassword = async () => {
+    if (!forgotPhone) {
+      setForgotMessage("Please enter your phone number.");
+      return;
+    }
+    try {
+      setForgotLoading(true);
+      setForgotMessage("");
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
+      const res = await fetch(`${apiBase}/api/users/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: forgotPhone }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setForgotMessage(data.error || "Failed to send reset code.");
+        return;
+      }
+      setForgotMessage(
+        data.message || "✅ Reset code sent. Check your phone/SMS."
+      );
+    } catch (e) {
+      setForgotMessage("Network error. Please try again.");
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   return (
@@ -528,6 +562,43 @@ function Login() {
             >
               Forgot Password?
             </button>
+            {showForgot && (
+              <div
+                className="yaba-card"
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  border: "1px solid var(--stroke)",
+                  borderRadius: 12,
+                  textAlign: "left",
+                }}
+              >
+                <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  Enter phone number to receive a reset code
+                </label>
+                <input
+                  type="tel"
+                  placeholder="Phone number"
+                  value={forgotPhone}
+                  onChange={(e) => setForgotPhone(e.target.value)}
+                  className="yaba-input"
+                  style={{ marginTop: 6 }}
+                />
+                <button
+                  onClick={submitForgotPassword}
+                  className="yaba-btn yaba-btn--accent"
+                  style={{ width: "100%" }}
+                  disabled={forgotLoading}
+                >
+                  {forgotLoading ? "Sending…" : "Send Reset Code"}
+                </button>
+                {forgotMessage && (
+                  <div style={{ fontSize: 12, marginTop: 6 }}>
+                    {forgotMessage}
+                  </div>
+                )}
+              </div>
+            )}
             <p style={styles.helpText}>
               💡 New users: Enter your phone number and create a password to get
               started.

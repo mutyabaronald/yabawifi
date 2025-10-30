@@ -8,6 +8,10 @@ function SuperAdminLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState("");
 
   useEffect(() => {
     const token = localStorage.getItem("superToken");
@@ -41,6 +45,38 @@ function SuperAdminLogin() {
       setError("Network error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleForgot = () => {
+    setShowForgot((v) => !v);
+    setForgotMessage("");
+  };
+
+  const submitForgotPassword = async () => {
+    if (!forgotEmail) {
+      setForgotMessage("Please enter your email.");
+      return;
+    }
+    try {
+      setForgotLoading(true);
+      setForgotMessage("");
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const res = await fetch(`${apiBase}/api/admin/superadmin/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setForgotMessage(data.message || 'Failed to send reset link.');
+        return;
+      }
+      setForgotMessage(data.message || '✅ Reset link sent. Check your email.');
+    } catch {
+      setForgotMessage('Network error. Please try again.');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -79,6 +115,19 @@ function SuperAdminLogin() {
         <button type="submit" className="yaba-btn yaba-btn--accent" style={{ width: '100%' }} disabled={loading}>
           {loading ? "Signing in…" : "Sign in"}
         </button>
+        <button type="button" onClick={toggleForgot} className="yaba-btn yaba-btn--secondary" style={{ width: '100%' }}>
+          Forgot Password?
+        </button>
+        {showForgot && (
+          <div className="yaba-card" style={{ marginTop: 8, padding: 12, border: '1px solid var(--stroke)', borderRadius: 12, textAlign: 'left' }}>
+            <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Enter email to receive reset link</label>
+            <input type="email" placeholder="Email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} className="yaba-input" style={{ marginTop: 6 }} />
+            <button onClick={submitForgotPassword} className="yaba-btn yaba-btn--accent" style={{ width: '100%' }} disabled={forgotLoading}>
+              {forgotLoading ? 'Sending…' : 'Send Reset Link'}
+            </button>
+            {forgotMessage && (<div style={{ fontSize: 12, marginTop: 6 }}>{forgotMessage}</div>)}
+          </div>
+        )}
         <div style={{ ...styles.hint, color: 'var(--text-muted)' }}>Protected area. Unauthorized access is prohibited.</div>
 
         <div style={{ height: 1, background: 'var(--stroke)', margin: '16px 0' }} />

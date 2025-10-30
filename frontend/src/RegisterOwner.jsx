@@ -119,28 +119,6 @@ function RegisterOwner() {
           maxWidth: 480,
         }}
       >
-        {/* Back button */}
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            background: "var(--surface-2)",
-            border: "1px solid var(--stroke)",
-            color: "var(--text-primary)",
-            borderRadius: 10,
-            padding: "6px 10px",
-            cursor: "pointer",
-            marginBottom: 12,
-          }}
-          aria-label="Go back"
-        >
-          <span style={{ fontSize: 16 }}>←</span>
-          <span style={{ fontWeight: 600 }}>Back</span>
-        </button>
-
         {/* Branding header */}
         <div style={{ marginBottom: 18, textAlign: "center" }}>
           <img
@@ -244,6 +222,17 @@ function RegisterOwner() {
             disabled={isLoading}
           >
             {isLoading ? "Creating Account..." : "Register & Login"}
+          </button>
+
+          {/* Back button below the primary action */}
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="yaba-btn yaba-btn--secondary"
+            style={{ width: "100%" }}
+            aria-label="Go back"
+          >
+            ← Back
           </button>
 
           {message && (

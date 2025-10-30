@@ -119,8 +119,56 @@ function RegisterOwner() {
           maxWidth: 480,
         }}
       >
-        <h2 style={styles.title}>Register WiFi Owner</h2>
-        <p style={styles.subtitle}>Create your hotspot business account</p>
+        {/* YABAnect branding header */}
+        <div style={{ marginBottom: 18, textAlign: "center" }}>
+          <img
+            src="/YABA.svg"
+            alt="YABA Logo"
+            style={{
+              width: 96,
+              height: 96,
+              objectFit: "cover",
+              borderRadius: "50%",
+              border: "none",
+              boxShadow: "none",
+              margin: "0 auto 15px",
+              display: "block",
+            }}
+          />
+          <h1
+            style={{
+              fontSize: 28,
+              fontWeight: "bold",
+              color: "rgb(37,99,235)",
+              margin: 0,
+              textShadow: "rgba(0,0,0,0.3) 0px 2px 4px",
+              fontFamily: "system-ui, -apple-system, sans-serif",
+            }}
+          >
+            YABAnect
+          </h1>
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 500,
+              color: "rgb(100,116,139)",
+              margin: "4px 0 0 0",
+            }}
+          >
+            Connect. Experience. Belong.
+          </div>
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 400,
+              color: "#6b7280",
+              margin: "8px 0 0 0",
+              opacity: 0.94,
+            }}
+          >
+            Create your hotspot business account
+          </div>
+        </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <input

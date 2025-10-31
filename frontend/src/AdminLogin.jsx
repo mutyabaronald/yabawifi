@@ -343,15 +343,6 @@ function AdminLogin() {
                 Forgot Password?
               </button>
             </div>
-            {/* Link to full reset page */}
-            <button
-              type="button"
-              onClick={() => navigate("/forgot-password")}
-              className="yaba-btn yaba-btn--secondary"
-              style={{ width: '100%' }}
-            >
-              Go to Full Reset Page
-            </button>
             {showForgot && (
               <div className="yaba-card" style={{ marginTop: 8, padding: 12, border: '1px solid var(--stroke)', borderRadius: 12, textAlign: 'left' }}>
                 <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Enter phone or email to receive reset instructions</label>

@@ -562,6 +562,15 @@ function Login() {
             >
               Forgot Password?
             </button>
+            {/* Link to full reset page */}
+            <button
+              type="button"
+              onClick={() => navigate("/forgot-password")}
+              className="yaba-btn yaba-btn--secondary"
+              style={{ width: "100%" }}
+            >
+              Go to Full Reset Page
+            </button>
             {showForgot && (
               <div
                 className="yaba-card"

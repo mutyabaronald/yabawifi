@@ -256,8 +256,7 @@ function Login() {
   };
 
   const handleForgotPassword = () => {
-    setShowForgot((v) => !v);
-    setForgotMessage("");
+    navigate("/forgot-password");
   };
 
   const submitForgotPassword = async () => {

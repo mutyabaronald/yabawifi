@@ -115,19 +115,10 @@ function SuperAdminLogin() {
         <button type="submit" className="yaba-btn yaba-btn--accent" style={{ width: '100%' }} disabled={loading}>
           {loading ? "Signing in…" : "Sign in"}
         </button>
-        <button type="button" onClick={toggleForgot} className="yaba-btn yaba-btn--secondary" style={{ width: '100%' }}>
+        <button type="button" onClick={() => navigate('/forgot-password')} className="yaba-btn yaba-btn--secondary" style={{ width: '100%' }}>
           Forgot Password?
         </button>
-        {showForgot && (
-          <div className="yaba-card" style={{ marginTop: 8, padding: 12, border: '1px solid var(--stroke)', borderRadius: 12, textAlign: 'left' }}>
-            <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Enter email to receive reset link</label>
-            <input type="email" placeholder="Email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} className="yaba-input" style={{ marginTop: 6 }} />
-            <button onClick={submitForgotPassword} className="yaba-btn yaba-btn--accent" style={{ width: '100%' }} disabled={forgotLoading}>
-              {forgotLoading ? 'Sending…' : 'Send Reset Link'}
-            </button>
-            {forgotMessage && (<div style={{ fontSize: 12, marginTop: 6 }}>{forgotMessage}</div>)}
-          </div>
-        )}
+        {/* Inline forgot removed in favor of full reset page */}
         <div style={{ ...styles.hint, color: 'var(--text-muted)' }}>Protected area. Unauthorized access is prohibited.</div>
 
         <div style={{ height: 1, background: 'var(--stroke)', margin: '16px 0' }} />

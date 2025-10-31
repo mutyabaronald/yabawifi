@@ -339,20 +339,11 @@ function AdminLogin() {
             </div>
 
             <div style={styles.forgotPassword}>
-              <button type="button" onClick={toggleForgot} style={{ ...styles.forgotLink, background: 'transparent', border: 'none', cursor: 'pointer' }}>
+              <button type="button" onClick={() => navigate('/forgot-password')} style={{ ...styles.forgotLink, background: 'transparent', border: 'none', cursor: 'pointer' }}>
                 Forgot Password?
               </button>
             </div>
-            {showForgot && (
-              <div className="yaba-card" style={{ marginTop: 8, padding: 12, border: '1px solid var(--stroke)', borderRadius: 12, textAlign: 'left' }}>
-                <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Enter phone or email to receive reset instructions</label>
-                <input type="text" placeholder="Phone or Email" value={forgotPhone} onChange={(e) => setForgotPhone(e.target.value)} className="yaba-input" style={{ marginTop: 6 }} />
-                <button onClick={submitForgotPassword} className="yaba-btn yaba-btn--accent" style={{ width: '100%' }} disabled={forgotLoading}>
-                  {forgotLoading ? 'Sending…' : 'Send Reset Link'}
-                </button>
-                {forgotMessage && (<div style={{ fontSize: 12, marginTop: 6 }}>{forgotMessage}</div>)}
-              </div>
-            )}
+            {/* Inline forgot removed in favor of full reset page */}
 
             <button 
               onClick={handleLogin} 

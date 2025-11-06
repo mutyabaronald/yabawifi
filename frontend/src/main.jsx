@@ -16,6 +16,7 @@ import UploadLogo from "./pages/UploadLogo";
 import Purchase from "./Purchase";
 import UserDashboard from "./UserDashboard";
 import HotspotsMap from "./pages/HotspotsMap";
+import ForgotPassword from "./ForgotPassword";
 
 import OwnerProfile from "../owner/OwnerProfile";
 import OwnerPackages from "../owner/OwnerPackages";
@@ -31,26 +32,32 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ThemeProvider>
       <BrowserRouter>
-        <ErrorBoundary fallback={<div style={{ padding: 24 }}>Something went wrong. Please reload the page.</div>}>
+        <ErrorBoundary
+          fallback={
+            <div style={{ padding: 24 }}>
+              Something went wrong. Please reload the page.
+            </div>
+          }
+        >
           <Routes>
             {/* Default: WiFi User login */}
             <Route path="/" element={<Login />} />
-            
+
             {/* Explicit user route */}
             <Route path="/user/login" element={<Login />} />
-            
+
             <Route path="/receipt" element={<Receipt />} />
-            
+
             {/* WiFi owner (admin) routes */}
             <Route path="/adminlogin" element={<AdminLogin />} />
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admindashboard" element={<AdminDashboard />} />
-            
+
             {/* Super admin (app owner) */}
             <Route path="/superdashboard" element={<SuperDashboard />} />
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />
             <Route path="/superadmin/dashboard" element={<SuperDashboard />} />
-            
+
             <Route path="/packages" element={<Packages />} />
             <Route path="/purchase" element={<Purchase />} />
             <Route path="/myreceipts" element={<MyReceipts />} />
@@ -58,10 +65,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             <Route path="/register-owner" element={<RegisterOwner />} />
             <Route path="/uploadlogo" element={<UploadLogo />} />
             <Route path="/hotspots" element={<HotspotsMap />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
 
             <Route path="/owner/profile" element={<OwnerProfile />} />
             <Route path="/owner/packages" element={<OwnerPackages />} />
-            <Route path="/owner/notifications" element={<OwnerNotifications />} />
+            <Route
+              path="/owner/notifications"
+              element={<OwnerNotifications />}
+            />
             <Route path="/owner/admins" element={<OwnerAdmins />} />
           </Routes>
         </ErrorBoundary>

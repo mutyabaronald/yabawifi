@@ -439,7 +439,7 @@ function Login() {
           </div>
         )}
 
-        {/* User Form */}
+        {/* User Form (Phone Login) */}
         {activeTab === "user" && (
           <div
             style={{
@@ -500,7 +500,7 @@ function Login() {
 
             <input
               type="text"
-              placeholder="Phonenumber"
+              placeholder="Phone Number"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className="yaba-input"
@@ -551,6 +551,7 @@ function Login() {
               onClick={handleLogin}
               className="yaba-btn yaba-btn--accent"
               style={{ width: "100%" }}
+              disabled={isLoading}
             >
               {isLoading ? "Connecting…" : "Connect"}
             </button>

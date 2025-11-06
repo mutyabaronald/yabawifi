@@ -1,6 +1,155 @@
 const express = require("express");
 const router = express.Router();
-const { db } = require("../firebase");
+const { db, admin } = require("../firebase");
+const {
+  sendPasswordResetCode,
+  verifyPasswordResetCode,
+} = require("../services/twilio");
+
+// Email registration endpoint - Creates Firebase Auth user and syncs to Firestore
+router.post("/register-email", async (req, res) => {
+  try {
+    const { email, password, phone } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: "Email and password are required",
+      });
+    }
+
+    // Validate password strength (same as frontend)
+    const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$/;
+    if (!PASSWORD_REGEX.test(password)) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Password must be at least 8 characters and include letters and numbers",
+      });
+    }
+
+    // Check if email already exists in Firestore
+    const emailQuery = db
+      .collection("users")
+      .where("email", "==", email)
+      .limit(1);
+    const emailSnapshot = await emailQuery.get();
+
+    if (!emailSnapshot.empty) {
+      return res.status(400).json({
+        success: false,
+        error: "Email already registered",
+      });
+    }
+
+    // Create user in Firebase Authentication
+    let authUser;
+    try {
+      authUser = await admin.auth().createUser({
+        email,
+        password,
+        emailVerified: false,
+      });
+    } catch (err) {
+      if (err.code === "auth/email-already-exists") {
+        return res.status(400).json({
+          success: false,
+          error: "Email already registered",
+        });
+      }
+      throw err;
+    }
+
+    // Create user document in Firestore
+    const userData = {
+      uid: authUser.uid,
+      email,
+      phone: phone || "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      authMethod: "email",
+    };
+
+    // Use email as document ID for faster lookups, or use uid
+    await db.collection("users").doc(authUser.uid).set(userData);
+
+    return res.json({
+      success: true,
+      uid: authUser.uid,
+      email: authUser.email,
+      message: "Account created successfully",
+    });
+  } catch (error) {
+    console.error("Email registration error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Registration failed. Please try again.",
+    });
+  }
+});
+
+// Email login endpoint - Authenticates with Firebase Auth and returns user data
+router.post("/auth-email", async (req, res) => {
+  try {
+    const { email, password, idToken } = req.body;
+
+    if (!email || !idToken) {
+      return res.status(400).json({
+        success: false,
+        error: "Email and authentication token are required",
+      });
+    }
+
+    // Verify the Firebase ID token
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid authentication token",
+      });
+    }
+
+    // Get user from Firestore
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+
+    if (!userDoc.exists) {
+      // Create user document if it doesn't exist (legacy migration)
+      await db.collection("users").doc(decodedToken.uid).set({
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+        phone: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        authMethod: "email",
+      });
+    }
+
+    const userData = userDoc.exists
+      ? userDoc.data()
+      : {
+          uid: decodedToken.uid,
+          email: decodedToken.email,
+          phone: "",
+          authMethod: "email",
+        };
+
+    return res.json({
+      success: true,
+      uid: decodedToken.uid,
+      email: decodedToken.email,
+      phone: userData.phone || "",
+      message: "Login successful",
+    });
+  } catch (error) {
+    console.error("Email authentication error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Authentication failed. Please try again.",
+    });
+  }
+});
 
 // User authentication endpoint - Optimized for performance
 router.post("/auth", async (req, res) => {
@@ -92,6 +241,413 @@ router.post("/auth", async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Authentication failed. Please try again.",
+    });
+  }
+});
+
+// Helper function to normalize phone number for searches
+const normalizePhoneForSearch = (phone) => {
+  // Remove all non-digit characters
+  let cleaned = phone.replace(/\D/g, "");
+
+  // Remove leading zeros
+  if (cleaned.startsWith("0")) {
+    cleaned = cleaned.substring(1);
+  }
+
+  // Return cleaned number (without country code for local searches)
+  return cleaned;
+};
+
+// Helper function to generate all possible phone formats
+const generatePhoneFormats = (phone) => {
+  const formats = [];
+
+  // Original format
+  formats.push(phone);
+
+  // Remove all non-digits
+  let cleaned = phone.replace(/\D/g, "");
+  formats.push(cleaned);
+
+  // With country code (Uganda +256)
+  if (!cleaned.startsWith("256") && cleaned.length === 9) {
+    formats.push("256" + cleaned);
+    formats.push("+256" + cleaned);
+  }
+
+  // Without country code
+  if (cleaned.startsWith("256") && cleaned.length === 12) {
+    formats.push(cleaned.substring(3));
+  }
+
+  // With leading zero
+  if (!cleaned.startsWith("0") && cleaned.length === 9) {
+    formats.push("0" + cleaned);
+  }
+
+  // Remove leading zero
+  if (cleaned.startsWith("0") && cleaned.length === 10) {
+    formats.push(cleaned.substring(1));
+  }
+
+  // Return unique formats
+  return [...new Set(formats)];
+};
+
+// Forgot password - Send reset code to phone
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        error: "Phone number is required",
+      });
+    }
+
+    console.log(`Forgot password requested for phone: ${phone}`);
+
+    // Check if user exists - try multiple phone formats
+    let userDoc = null;
+    let userData = null;
+    const phoneFormats = generatePhoneFormats(phone);
+
+    console.log(`Searching for user with phone formats:`, phoneFormats);
+
+    try {
+      // Method 1: Try direct document access with each format
+      for (const phoneFormat of phoneFormats) {
+        userDoc = await db.collection("users").doc(phoneFormat).get();
+        if (userDoc.exists) {
+          userData = userDoc.data();
+          console.log(`Found user by document ID: ${phoneFormat}`);
+          break;
+        }
+      }
+
+      // Method 2: Try query with each format
+      if (!userDoc || !userDoc.exists) {
+        for (const phoneFormat of phoneFormats) {
+          const userQuery = db
+            .collection("users")
+            .where("phone", "==", phoneFormat)
+            .limit(1);
+          const snapshot = await userQuery.get();
+
+          if (!snapshot.empty) {
+            userDoc = snapshot.docs[0];
+            userData = userDoc.data();
+            console.log(`Found user by phone field: ${phoneFormat}`);
+            break;
+          }
+        }
+      }
+
+      // Method 3: Try with normalized phone (last 9 digits)
+      if (!userDoc || !userDoc.exists) {
+        const normalized = normalizePhoneForSearch(phone);
+        const userQuery = db
+          .collection("users")
+          .where("phone", "==", normalized)
+          .limit(1);
+        const snapshot = await userQuery.get();
+
+        if (!snapshot.empty) {
+          userDoc = snapshot.docs[0];
+          userData = userDoc.data();
+          console.log(`Found user with normalized phone: ${normalized}`);
+        }
+      }
+
+      // Still not found - check if phone might be stored differently
+      if (!userDoc || !userDoc.exists) {
+        // Try searching with contains (if indexed)
+        // This is a fallback - might not work without proper index
+        console.log(
+          `User not found with any format. Checking Firestore structure...`
+        );
+        return res.status(404).json({
+          success: false,
+          error:
+            "User not found with this phone number. Please check the number and try again.",
+        });
+      }
+    } catch (err) {
+      console.error("Error checking user:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Error checking user: " + err.message,
+      });
+    }
+
+    // Use the phone number as stored in the database for SMS
+    // If we found the user, use their stored phone format, otherwise use the formatted input
+    const phoneToUse = userData?.phone || phone;
+
+    console.log(
+      `Sending SMS to phone: ${phoneToUse} (original input: ${phone})`
+    );
+
+    // Send verification code via Twilio Verify API
+    const smsResult = await sendPasswordResetCode(phoneToUse);
+
+    if (!smsResult.success) {
+      console.error("Failed to send verification code:", {
+        error: smsResult.error,
+        status: smsResult.status,
+        code: smsResult.code,
+        needsVerification: smsResult.needsVerification,
+      });
+
+      // Provide more helpful error message to user
+      let errorMessage =
+        smsResult.error ||
+        "Failed to send verification code. Please try again.";
+
+      if (smsResult.needsVerification) {
+        errorMessage =
+          "This phone number needs to be verified in Twilio Console first. If you're on a trial account, please verify your phone number at https://console.twilio.com/us1/develop/phone-numbers/manage/verified";
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: errorMessage,
+      });
+    }
+
+    // Store verification info in Firestore (for tracking)
+    await db.collection("password_resets").doc(phone).set({
+      phone,
+      verificationSid: smsResult.verificationSid,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    });
+
+    return res.json({
+      success: true,
+      message: "Verification code sent to your phone",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to send reset code. Please try again.",
+    });
+  }
+});
+
+// Verify reset code using Twilio Verify API
+router.post("/verify-reset-code", async (req, res) => {
+  try {
+    const { phone, code } = req.body;
+
+    if (!phone || !code) {
+      return res.status(400).json({
+        success: false,
+        error: "Phone number and code are required",
+      });
+    }
+
+    // Find the user to get their stored phone format
+    const phoneFormats = generatePhoneFormats(phone);
+    let userDoc = null;
+    let userData = null;
+    let storedPhone = phone;
+
+    // Try to find user with multiple formats
+    for (const phoneFormat of phoneFormats) {
+      userDoc = await db.collection("users").doc(phoneFormat).get();
+      if (userDoc.exists) {
+        userData = userDoc.data();
+        storedPhone = userData.phone || phoneFormat;
+        break;
+      }
+    }
+
+    if (!userDoc || !userDoc.exists) {
+      for (const phoneFormat of phoneFormats) {
+        const userQuery = db
+          .collection("users")
+          .where("phone", "==", phoneFormat)
+          .limit(1);
+        const snapshot = await userQuery.get();
+        if (!snapshot.empty) {
+          userDoc = snapshot.docs[0];
+          userData = userDoc.data();
+          storedPhone = userData.phone || phoneFormat;
+          break;
+        }
+      }
+    }
+
+    // Use stored phone format or fallback to formatted input
+    const phoneToUse = storedPhone !== phone ? storedPhone : phone;
+
+    console.log(
+      `Verifying code for phone: ${phoneToUse} (original input: ${phone})`
+    );
+
+    // Verify code using Twilio Verify API (use the same phone format used for sending)
+    const verifyResult = await verifyPasswordResetCode(phoneToUse, code);
+
+    if (!verifyResult.success || !verifyResult.verified) {
+      return res.status(400).json({
+        success: false,
+        error: verifyResult.error || "Invalid or expired verification code",
+      });
+    }
+
+    // Update Firestore record (use consistent phone format)
+    const resetDocId = storedPhone || phone;
+    await db.collection("password_resets").doc(resetDocId).update({
+      verified: true,
+      verifiedAt: new Date().toISOString(),
+      status: "verified",
+      verificationSid: verifyResult.verificationSid,
+    });
+
+    return res.json({
+      success: true,
+      message: "Verification code verified",
+    });
+  } catch (error) {
+    console.error("Verify reset code error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to verify code. Please try again.",
+    });
+  }
+});
+
+// Reset password with verified code
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { phone, newPassword } = req.body;
+
+    if (!phone || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: "Phone number and new password are required",
+      });
+    }
+
+    // Find the user to get their document ID
+    const phoneFormats = generatePhoneFormats(phone);
+    let userDoc = null;
+    let userId = null;
+
+    // Try to find user with multiple formats
+    for (const phoneFormat of phoneFormats) {
+      userDoc = await db.collection("users").doc(phoneFormat).get();
+      if (userDoc.exists) {
+        userId = phoneFormat;
+        break;
+      }
+    }
+
+    if (!userDoc || !userDoc.exists) {
+      for (const phoneFormat of phoneFormats) {
+        const userQuery = db
+          .collection("users")
+          .where("phone", "==", phoneFormat)
+          .limit(1);
+        const snapshot = await userQuery.get();
+        if (!snapshot.empty) {
+          userDoc = snapshot.docs[0];
+          userId = userDoc.id; // Use the actual document ID
+          break;
+        }
+      }
+    }
+
+    if (!userDoc || !userDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found with this phone number",
+      });
+    }
+
+    // Validate password strength
+    const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$/;
+    if (!PASSWORD_REGEX.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Password must be at least 8 characters and include letters and numbers",
+      });
+    }
+
+    // Check if verification was completed - try multiple phone formats
+    let resetDoc = null;
+    let resetData = null;
+
+    // Try to find reset document with multiple formats
+    for (const phoneFormat of phoneFormats) {
+      resetDoc = await db.collection("password_resets").doc(phoneFormat).get();
+      if (resetDoc.exists) {
+        resetData = resetDoc.data();
+        break;
+      }
+    }
+
+    // If not found by doc ID, try to find by phone field in password_resets
+    if (!resetDoc || !resetDoc.exists) {
+      for (const phoneFormat of phoneFormats) {
+        const resetQuery = db
+          .collection("password_resets")
+          .where("phone", "==", phoneFormat)
+          .limit(1);
+        const snapshot = await resetQuery.get();
+        if (!snapshot.empty) {
+          resetDoc = snapshot.docs[0];
+          resetData = resetDoc.data();
+          break;
+        }
+      }
+    }
+
+    if (!resetDoc || !resetDoc.exists || resetData?.status !== "verified") {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Phone verification not completed. Please verify your code first.",
+      });
+    }
+
+    // Check if code was already used
+    if (resetData.used) {
+      return res.status(400).json({
+        success: false,
+        error: "Reset code has already been used",
+      });
+    }
+
+    // Update password (we already found the user above)
+    await db.collection("users").doc(userId).update({
+      password: newPassword,
+      updatedAt: new Date().toISOString(),
+      passwordSetAt: new Date().toISOString(),
+    });
+
+    // Mark reset code as used (use the resetDoc ID)
+    const resetDocIdToUse = resetDoc.id || phone;
+    await db.collection("password_resets").doc(resetDocIdToUse).update({
+      used: true,
+      usedAt: new Date().toISOString(),
+      status: "completed",
+    });
+
+    return res.json({
+      success: true,
+      message: "Password reset successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to reset password. Please try again.",
     });
   }
 });
@@ -618,11 +1174,9 @@ router.post("/:phone/loyalty/:hotspotId/redeem", async (req, res) => {
 
     const hotspotData = hotspotDoc.data();
     if (rewardPackage.ownerId !== hotspotData.ownerId) {
-      return res
-        .status(403)
-        .json({
-          error: "Loyalty reward package does not belong to this hotspot",
-        });
+      return res.status(403).json({
+        error: "Loyalty reward package does not belong to this hotspot",
+      });
     }
 
     const pointsRequired = rewardPackage.pointsRequired;

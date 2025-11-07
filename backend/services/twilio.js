@@ -7,10 +7,22 @@ const getTwilioClient = () => {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
   if (!accountSid || !authToken) {
-    console.warn(
-      "Twilio credentials not found. SMS functionality will be disabled."
+    console.error(
+      "❌ Twilio credentials not found. SMS functionality will be disabled."
     );
+    console.error("Missing:", {
+      accountSid: !accountSid ? "TWILIO_ACCOUNT_SID" : "",
+      authToken: !authToken ? "TWILIO_AUTH_TOKEN" : "",
+    });
+    console.error("Please check your .env file in the backend directory.");
     return null;
+  }
+
+  // Check if auth token has brackets (common mistake)
+  if (authToken.startsWith("[") || authToken.endsWith("]")) {
+    console.error(
+      "⚠️  WARNING: Auth token appears to have brackets. Remove [ and ] from TWILIO_AUTH_TOKEN in .env"
+    );
   }
 
   return twilio(accountSid, authToken);

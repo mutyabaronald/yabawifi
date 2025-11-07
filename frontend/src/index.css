@@ -29,7 +29,7 @@
     --n11: #3a3d41;
     --n12: #232528;
     --n13: #151617;
-    --accent: #8b5cf6;
+    --accent: #2563eb;
     --success: #10b981;
     --danger: #ef4444;
     /* Surface mappings for easy theming */
@@ -186,8 +186,8 @@
     background-repeat: no-repeat, no-repeat;
     background-position: right 0.9rem center, 0 0;
     background-size: 18px 18px, 100% 100%;
-    box-shadow: 0 0 0 2px rgba(167,139,250,0.35) !important;
-    border-color: #a78bfa; /* brighter purple */
+    box-shadow: 0 0 0 2px rgba(37,99,235,0.35) !important;
+    border-color: #3b82f6; /* brighter blue */
     outline: none;
   }
 
@@ -217,7 +217,7 @@
   .yaba-elev-3 { background-color: var(--surface-3); }
   /* Cursor-like accent for focus states */
   input:focus, select:focus, textarea:focus {
-    outline: 2px solid #8b5cf6;
+    outline: 2px solid #2563eb;
     outline-offset: 0;
   }
   /* Helpers to quickly apply neutrals */

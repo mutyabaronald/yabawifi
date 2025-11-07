@@ -1,4 +1,5 @@
-require("dotenv").config();
+// Load environment variables from backend/.env
+require("dotenv").config({ path: __dirname + "/.env" });
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
@@ -36,6 +37,26 @@ const { v4: uuidv4 } = require("uuid");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Verify Twilio configuration on startup
+if (
+  process.env.TWILIO_ACCOUNT_SID &&
+  process.env.TWILIO_AUTH_TOKEN &&
+  process.env.TWILIO_VERIFY_SERVICE_SID
+) {
+  console.log("✅ Twilio SMS service configured");
+} else {
+  console.warn(
+    "⚠️  Twilio SMS service not fully configured. Forgot password via SMS will not work."
+  );
+  console.warn("   Missing:", {
+    accountSid: !process.env.TWILIO_ACCOUNT_SID ? "TWILIO_ACCOUNT_SID" : "",
+    authToken: !process.env.TWILIO_AUTH_TOKEN ? "TWILIO_AUTH_TOKEN" : "",
+    serviceSid: !process.env.TWILIO_VERIFY_SERVICE_SID
+      ? "TWILIO_VERIFY_SERVICE_SID"
+      : "",
+  });
+}
+
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -51,7 +72,10 @@ app.use("/api/statistics", statisticsRoutes);
 // Test route directly in server.js
 app.get("/api/test", (req, res) => {
   console.log("SERVER TEST ROUTE HIT!");
-  res.json({ message: "Server test route working", timestamp: new Date().toISOString() });
+  res.json({
+    message: "Server test route working",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.use(superRoutes);
@@ -82,14 +106,17 @@ app.use("/api/devices", deviceTrackingRoutes);
 app.use(express.static(path.join(__dirname, "../frontend")));
 
 // Serve uploaded branding files
-app.use('/uploads/branding', express.static(path.join(__dirname, 'uploads/branding')));
+app.use(
+  "/uploads/branding",
+  express.static(path.join(__dirname, "uploads/branding"))
+);
 
 // Health check endpoint for Render.com
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    message: 'WiFi Automation API is running',
-    timestamp: new Date().toISOString()
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    message: "WiFi Automation API is running",
+    timestamp: new Date().toISOString(),
   });
 });
 

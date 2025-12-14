@@ -391,6 +391,12 @@ router.post("/forgot-password", async (req, res) => {
     );
 
     // Send verification code via Twilio Verify API
+    console.log(`[Forgot Password] Attempting to send SMS to: ${phoneToUse}`);
+    console.log(`[Forgot Password] Twilio env check:`, {
+      hasAccountSid: !!process.env.TWILIO_ACCOUNT_SID,
+      hasAuthToken: !!process.env.TWILIO_AUTH_TOKEN,
+      hasServiceSid: !!process.env.TWILIO_VERIFY_SERVICE_SID,
+    });
     const smsResult = await sendPasswordResetCode(phoneToUse);
 
     if (!smsResult.success) {

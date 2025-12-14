@@ -78,6 +78,25 @@ app.get("/api/test", (req, res) => {
   });
 });
 
+// Test Twilio configuration endpoint
+app.get("/api/test/twilio", (req, res) => {
+  const config = {
+    hasAccountSid: !!process.env.TWILIO_ACCOUNT_SID,
+    hasAuthToken: !!process.env.TWILIO_AUTH_TOKEN,
+    hasServiceSid: !!process.env.TWILIO_VERIFY_SERVICE_SID,
+    accountSidPrefix: process.env.TWILIO_ACCOUNT_SID ? process.env.TWILIO_ACCOUNT_SID.substring(0, 5) : "N/A",
+    authTokenPrefix: process.env.TWILIO_AUTH_TOKEN ? process.env.TWILIO_AUTH_TOKEN.substring(0, 5) : "N/A",
+    serviceSidPrefix: process.env.TWILIO_VERIFY_SERVICE_SID ? process.env.TWILIO_VERIFY_SERVICE_SID.substring(0, 5) : "N/A",
+    cwd: process.cwd(),
+    nodeEnv: process.env.NODE_ENV,
+  };
+  res.json({
+    message: "Twilio configuration check",
+    configured: config.hasAccountSid && config.hasAuthToken && config.hasServiceSid,
+    ...config,
+  });
+});
+
 app.use(superRoutes);
 app.use("/api/receipts", receiptRoutes);
 app.use("/api/logo", logoRoutes);

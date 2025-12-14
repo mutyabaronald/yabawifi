@@ -6,6 +6,15 @@ const getTwilioClient = () => {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
+  // Debug: Log what we're getting (without exposing full tokens)
+  console.log("[Twilio Debug] Checking credentials:", {
+    hasAccountSid: !!accountSid,
+    hasAuthToken: !!authToken,
+    accountSidPrefix: accountSid ? accountSid.substring(0, 5) : "N/A",
+    authTokenPrefix: authToken ? authToken.substring(0, 5) : "N/A",
+    allEnvKeys: Object.keys(process.env).filter(k => k.includes("TWILIO")).join(", "),
+  });
+
   if (!accountSid || !authToken) {
     console.error(
       "❌ Twilio credentials not found. SMS functionality will be disabled."
@@ -14,7 +23,10 @@ const getTwilioClient = () => {
       accountSid: !accountSid ? "TWILIO_ACCOUNT_SID" : "",
       authToken: !authToken ? "TWILIO_AUTH_TOKEN" : "",
     });
+    console.error("Current working directory:", process.cwd());
+    console.error("NODE_ENV:", process.env.NODE_ENV);
     console.error("Please check your .env file in the backend directory.");
+    console.error("Make sure the server was restarted after adding environment variables.");
     return null;
   }
 
@@ -25,6 +37,7 @@ const getTwilioClient = () => {
     );
   }
 
+  console.log("✅ Twilio client initialized successfully");
   return twilio(accountSid, authToken);
 };
 

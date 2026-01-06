@@ -227,6 +227,35 @@
   .text-primary-dark { color: var(--n2); }
 }
 
+/* Mobile-responsive tweaks */
+@media (max-width: 640px) {
+  body {
+    padding: 0;
+    margin: 0;
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+  .yaba-card {
+    width: 100%;
+    padding: 14px;
+    border-radius: 16px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.18);
+  }
+  .yaba-btn {
+    width: 100%;
+    font-size: 15px;
+    padding: 12px 14px;
+  }
+  .yaba-input, .yaba-select, .yaba-field {
+    width: 100%;
+    font-size: 15px;
+    padding: 12px 14px;
+  }
+  .yaba-card-title {
+    font-size: 16px;
+  }
+}
+
 /* Optional custom scrollbar using plain CSS colors */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #f3f4f6; }

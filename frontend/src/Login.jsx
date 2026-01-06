@@ -34,6 +34,24 @@ function Login() {
   const [hotspotId, setHotspotId] = useState("");
   const [userLocation, setUserLocation] = useState(null);
   const [locationStatus, setLocationStatus] = useState("checking"); // 'checking', 'in-range', 'out-of-range'
+  const [canLogin, setCanLogin] = useState(false);
+  const [checkingHotspot, setCheckingHotspot] = useState(true);
+  const [hotspotMessage, setHotspotMessage] = useState(
+    "Checking hotspot connection…"
+  );
+
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timer);
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
+  };
 
   // 🔥 Fetch logo on load from URL context (routerId/ownerId). Fallback: look up by phone as user types.
   useEffect(() => {
@@ -84,6 +102,55 @@ function Login() {
       setActiveTab("user"); // Switch to user login tab
     }
   }, [location.search]);
+
+  useEffect(() => {
+    const checkHotspotConnection = async () => {
+      setCheckingHotspot(true);
+      setCanLogin(false);
+      setHotspotMessage("Checking hotspot connection…");
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
+      const customProbe = import.meta.env.VITE_HOTSPOT_PING_URL;
+      const probes = [
+        customProbe,
+        "http://192.168.4.1/ping",
+        "http://10.0.0.1/ping",
+        `${apiBase}/api/ping`,
+      ].filter(Boolean);
+
+      for (const probe of probes) {
+        try {
+          const res = await fetchWithTimeout(
+            probe,
+            {
+              method: "GET",
+              mode:
+                probe.startsWith("http://192.168.") ||
+                probe.startsWith("http://10.")
+                  ? "no-cors"
+                  : "cors",
+            },
+            2000
+          );
+          if (res || res === undefined) {
+            setCanLogin(true);
+            setHotspotMessage("");
+            setCheckingHotspot(false);
+            return;
+          }
+        } catch {
+          // try next probe
+        }
+      }
+
+      setHotspotMessage(
+        "Please connect to the hotspot Wi-Fi before logging in."
+      );
+      setCanLogin(false);
+      setCheckingHotspot(false);
+    };
+
+    checkHotspotConnection();
+  }, []);
 
   // Check user location and proximity to hotspot
   const checkUserLocation = async (hotspotId) => {
@@ -177,11 +244,16 @@ function Login() {
       return;
     }
 
+    if (!canLogin) {
+      setError("Connect to the hotspot Wi-Fi to log in.");
+      return;
+    }
+
     try {
       setIsLoading(true);
 
       // Use backend API instead of direct Firebase access
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${
           import.meta.env.VITE_API_URL || "http://localhost:5000"
         }/api/users/auth`,
@@ -191,7 +263,8 @@ function Login() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ phone, password }),
-        }
+        },
+        8000
       );
 
       const data = await response.json();
@@ -226,7 +299,12 @@ function Login() {
       }
     } catch (err) {
       console.error("Login error:", err);
-      setError("Network error. Please check your connection and try again.");
+      const timedOut = err?.name === "AbortError";
+      setError(
+        timedOut
+          ? "Connection timed out. Connect to the hotspot Wi-Fi and try again."
+          : "Network error. Please check your connection and try again."
+      );
     } finally {
       setIsLoading(false);
     }
@@ -551,10 +629,25 @@ function Login() {
               onClick={handleLogin}
               className="yaba-btn yaba-btn--accent"
               style={{ width: "100%" }}
-              disabled={isLoading}
+              disabled={isLoading || !canLogin || checkingHotspot}
             >
-              {isLoading ? "Connecting…" : "Connect"}
+              {isLoading
+                ? "Connecting…"
+                : checkingHotspot
+                ? "Checking hotspot…"
+                : "Connect"}
             </button>
+            {hotspotMessage ? (
+              <div
+                style={{
+                  textAlign: "center",
+                  color: "var(--text-muted)",
+                  fontSize: 13,
+                }}
+              >
+                {hotspotMessage}
+              </div>
+            ) : null}
             <button
               onClick={handleForgotPassword}
               className="yaba-btn yaba-btn--secondary"

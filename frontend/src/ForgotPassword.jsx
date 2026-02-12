@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { auth } from "./firebase";
-import YABALogo from "../public/YABA.svg";
 
 const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$/; // min 8, letters+numbers
 
@@ -125,7 +124,7 @@ export default function ForgotPassword() {
     }
     if (!PASSWORD_REGEX.test(newPassword)) {
       setNewPasswordMessage(
-        "Password must be at least 8 chars and include letters & numbers."
+        "Password must be at least 8 chars and include letters & numbers.",
       );
       return;
     }
@@ -289,15 +288,32 @@ export default function ForgotPassword() {
         {/* YABA Header */}
         <div style={styles.yabaHeader}>
           <img
-            alt="YABA Logo"
-            src={YABALogo}
+            alt="YABAlink Logo"
+            src="/yabalink logo mono.svg"
             style={styles.logo}
           />
-          <h1 style={styles.yabaTitle}>YABAnect</h1>
+          <h1 style={styles.yabaTitle}>
+            YABA
+            <span
+              style={{
+                fontFamily: '"Adobe Song Std", "Songti SC", serif',
+                fontStyle: "italic",
+              }}
+            >
+              link
+            </span>
+          </h1>
           <div style={styles.tagline}>Connect. Experience. Belong.</div>
         </div>
 
-        <h2 style={{ fontSize: "20px", fontWeight: 600, marginBottom: "20px", color: "var(--text-primary)" }}>
+        <h2
+          style={{
+            fontSize: "20px",
+            fontWeight: 600,
+            marginBottom: "20px",
+            color: "var(--text-primary)",
+          }}
+        >
           Forgot Password
         </h2>
 
@@ -324,7 +340,14 @@ export default function ForgotPassword() {
 
         {activeTab === "email" && (
           <div style={{ marginTop: "16px" }}>
-            <label style={{ fontSize: "13px", color: "var(--text-secondary)", display: "block", marginBottom: "8px" }}>
+            <label
+              style={{
+                fontSize: "13px",
+                color: "var(--text-secondary)",
+                display: "block",
+                marginBottom: "8px",
+              }}
+            >
               Enter your email
             </label>
             <input
@@ -364,7 +387,14 @@ export default function ForgotPassword() {
           <div style={{ marginTop: "16px" }}>
             {!otpSent && (
               <>
-                <label style={{ fontSize: "13px", color: "var(--text-secondary)", display: "block", marginBottom: "8px" }}>
+                <label
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--text-secondary)",
+                    display: "block",
+                    marginBottom: "8px",
+                  }}
+                >
                   Enter your phone number
                 </label>
                 <input
@@ -402,10 +432,21 @@ export default function ForgotPassword() {
 
             {otpSent && !verifiedPhone && (
               <>
-                <div style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "8px" }}>
+                <div
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--text-secondary)",
+                    marginBottom: "8px",
+                  }}
+                >
                   Enter the reset code sent to your phone.
                   {countdown > 0 && (
-                    <span style={{ marginLeft: "4px", color: "var(--text-tertiary)" }}>
+                    <span
+                      style={{
+                        marginLeft: "4px",
+                        color: "var(--text-tertiary)",
+                      }}
+                    >
                       (expires in {countdown}s)
                     </span>
                   )}
@@ -445,7 +486,14 @@ export default function ForgotPassword() {
 
             {verifiedPhone && (
               <>
-                <label style={{ fontSize: "13px", color: "var(--text-secondary)", display: "block", marginBottom: "8px" }}>
+                <label
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--text-secondary)",
+                    display: "block",
+                    marginBottom: "8px",
+                  }}
+                >
                   Enter new password
                 </label>
                 <input
@@ -484,10 +532,7 @@ export default function ForgotPassword() {
         )}
 
         {/* Back Button */}
-        <button
-          onClick={() => navigate("/")}
-          style={styles.backButton}
-        >
+        <button onClick={() => navigate("/")} style={styles.backButton}>
           ← Back to Login
         </button>
       </div>

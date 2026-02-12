@@ -44,7 +44,7 @@ function RegisterOwner() {
           ownerPhone,
           password,
           businessName,
-        }
+        },
       );
 
       if (registerResponse.data.success) {
@@ -75,7 +75,7 @@ function RegisterOwner() {
             .catch((err) => {
               console.warn(
                 "Session storage failed, but login will still work:",
-                err
+                err,
               );
             });
 
@@ -84,7 +84,7 @@ function RegisterOwner() {
         } catch (loginErr) {
           console.error("Auto-login error:", loginErr);
           setError(
-            "Registration successful but auto-login failed. Please login manually."
+            "Registration successful but auto-login failed. Please login manually.",
           );
           setMessage("");
         }
@@ -122,8 +122,8 @@ function RegisterOwner() {
         {/* Branding header */}
         <div style={{ marginBottom: 18, textAlign: "center" }}>
           <img
-            src="/YABA.svg"
-            alt="YABA Logo"
+            src="/yabalink logo mono.svg"
+            alt="YABAlink Logo"
             style={{
               width: 96,
               height: 96,
@@ -145,7 +145,15 @@ function RegisterOwner() {
               fontFamily: "system-ui, -apple-system, sans-serif",
             }}
           >
-            YABAnect
+            YABA
+            <span
+              style={{
+                fontFamily: '"Adobe Song Std", "Songti SC", serif',
+                fontStyle: "italic",
+              }}
+            >
+              link
+            </span>
           </h1>
           <div
             style={{
@@ -262,8 +270,8 @@ function RegisterOwner() {
             }}
           >
             <img
-              src="/YABA.svg"
-              alt="YABA"
+              src="/yabanect logo.svg"
+              alt="YABAnect"
               style={{ height: 32, objectFit: "contain" }}
             />
           </div>

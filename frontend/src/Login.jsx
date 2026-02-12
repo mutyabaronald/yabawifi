@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import YABALogo from "../public/YABA.svg";
 import MovingReviews from "./components/MovingReviews";
 
 function Login() {
@@ -37,7 +36,7 @@ function Login() {
   const [canLogin, setCanLogin] = useState(false);
   const [checkingHotspot, setCheckingHotspot] = useState(true);
   const [hotspotMessage, setHotspotMessage] = useState(
-    "Checking hotspot connection…"
+    "Checking hotspot connection…",
   );
 
   const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
@@ -64,7 +63,7 @@ function Login() {
       try {
         if (routerId) {
           const res = await fetch(
-            `/api/routers/${encodeURIComponent(routerId)}/portal-branding`
+            `/api/routers/${encodeURIComponent(routerId)}/portal-branding`,
           );
           if (res.ok) {
             const json = await res.json();
@@ -77,7 +76,7 @@ function Login() {
         }
         if (ownerId) {
           const res = await fetch(
-            `/api/owners/logo/${encodeURIComponent(ownerId)}`
+            `/api/owners/logo/${encodeURIComponent(ownerId)}`,
           );
           if (res.ok) {
             const json = await res.json();
@@ -129,7 +128,7 @@ function Login() {
                   ? "no-cors"
                   : "cors",
             },
-            2000
+            2000,
           );
           if (res || res === undefined) {
             setCanLogin(true);
@@ -143,7 +142,7 @@ function Login() {
       }
 
       setHotspotMessage(
-        "Please connect to the hotspot Wi-Fi before logging in."
+        "Please connect to the hotspot Wi-Fi before logging in.",
       );
       setCanLogin(false);
       setCheckingHotspot(false);
@@ -175,7 +174,7 @@ function Login() {
               userLat,
               userLng,
               hotspotData.hotspot.latitude,
-              hotspotData.hotspot.longitude
+              hotspotData.hotspot.longitude,
             );
 
             // Consider within range if within 100 meters
@@ -188,7 +187,7 @@ function Login() {
           console.error("Error getting location:", error);
           setLocationStatus("out-of-range");
         },
-        { timeout: 10000, enableHighAccuracy: true }
+        { timeout: 10000, enableHighAccuracy: true },
       );
     } catch (error) {
       console.error("Error checking location:", error);
@@ -221,7 +220,7 @@ function Login() {
         const response = await fetch(
           `${
             import.meta.env.VITE_API_URL || "http://localhost:5000"
-          }/api/owners/by-phone/${encodeURIComponent(phone)}`
+          }/api/owners/by-phone/${encodeURIComponent(phone)}`,
         );
         if (response.ok) {
           const data = await response.json();
@@ -264,7 +263,7 @@ function Login() {
           },
           body: JSON.stringify({ phone, password }),
         },
-        8000
+        8000,
       );
 
       const data = await response.json();
@@ -303,7 +302,7 @@ function Login() {
       setError(
         timedOut
           ? "Connection timed out. Connect to the hotspot Wi-Fi and try again."
-          : "Network error. Please check your connection and try again."
+          : "Network error. Please check your connection and try again.",
       );
     } finally {
       setIsLoading(false);
@@ -357,7 +356,7 @@ function Login() {
         return;
       }
       setForgotMessage(
-        data.message || "✅ Reset code sent. Check your phone/SMS."
+        data.message || "✅ Reset code sent. Check your phone/SMS.",
       );
     } catch (e) {
       setForgotMessage("Network error. Please try again.");
@@ -440,7 +439,11 @@ function Login() {
           </div>
         ) : (
           <div style={{ marginBottom: 18 }}>
-            <img src="/YABA.svg" alt="YABA Logo" style={styles.logoImage} />
+            <img
+              src="/yabalink logo mono.svg"
+              alt="YABAlink Logo"
+              style={styles.logoImage}
+            />
             <h1
               style={{
                 ...styles.yabaBrandName,
@@ -449,7 +452,15 @@ function Login() {
                 margin: 0,
               }}
             >
-              YABAnect
+              YABA
+              <span
+                style={{
+                  fontFamily: '"Adobe Song Std", "Songti SC", serif',
+                  fontStyle: "italic",
+                }}
+              >
+                link
+              </span>
             </h1>
             <div
               style={{
@@ -634,8 +645,8 @@ function Login() {
               {isLoading
                 ? "Connecting…"
                 : checkingHotspot
-                ? "Checking hotspot…"
-                : "Connect"}
+                  ? "Checking hotspot…"
+                  : "Connect"}
             </button>
             {hotspotMessage ? (
               <div
@@ -724,7 +735,7 @@ function Login() {
                 <button
                   onClick={() =>
                     window.open(
-                      `https://wa.me/${ownerWhatsapp.replace(/[^0-9]/g, "")}`
+                      `https://wa.me/${ownerWhatsapp.replace(/[^0-9]/g, "")}`,
                     )
                   }
                   style={styles.supportBtn}
@@ -742,7 +753,11 @@ function Login() {
         <div style={styles.poweredBy}>
           <p>Powered by</p>
           <div style={styles.logoRow}>
-            <img src="/YABA.svg" alt="YABA Inc." style={styles.yabaLogo} />
+            <img
+              src="/yabanect logo.svg"
+              alt="YABAnect"
+              style={styles.yabaLogo}
+            />
           </div>
         </div>
       </div>

@@ -36,7 +36,7 @@ function AdminLogin() {
     }
     // Prefilled message
     const message = encodeURIComponent(
-      "Hello, I need help with my Wifi owner account."
+      "Hello, I need help with my Wifi owner account.",
     );
     return `https://wa.me/${digits}?text=${message}`;
   };
@@ -44,7 +44,7 @@ function AdminLogin() {
   // Fetch statistics and contact information on component mount
   useEffect(() => {
     let isMounted = true;
-    
+
     const fetchData = async () => {
       try {
         console.log("Fetching data from API...");
@@ -69,9 +69,9 @@ function AdminLogin() {
             },
           }),
         ]);
-        
+
         if (!isMounted) return;
-        
+
         if (reviewsRes.ok) {
           const reviewsData = await reviewsRes.json();
           console.log("Reviews data received:", reviewsData);
@@ -79,7 +79,7 @@ function AdminLogin() {
             setStats((prev) => ({ ...prev, reviews: reviewsData }));
           }
         }
-        
+
         if (usersRes.ok) {
           const usersData = await usersRes.json();
           console.log("Daily users data received:", usersData);
@@ -106,18 +106,18 @@ function AdminLogin() {
         if (isExtensionError(err)) {
           console.warn(
             "Browser extension communication error (ignored):",
-            err.message
+            err.message,
           );
           return; // Don't treat extension errors as app errors
         }
-        
+
         console.error("Failed to fetch data:", err);
         console.log("Using default data (0 values and default contact info)");
       }
     };
-    
+
     fetchData();
-    
+
     return () => {
       isMounted = false;
     };
@@ -134,7 +134,7 @@ function AdminLogin() {
 
     try {
       console.log("Attempting login with phone:", phone);
-      
+
       const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
       const res = await fetch(`${apiBase}/api/owners/login`, {
         method: "POST",
@@ -158,7 +158,7 @@ function AdminLogin() {
         console.log("Owner ID:", data.owner.id);
         console.log("Token:", data.token);
         console.log("Owner Name:", data.owner.ownerName);
-        
+
         // Store owner session
         localStorage.setItem("ownerId", data.owner.id);
         localStorage.setItem("ownerToken", data.token);
@@ -169,7 +169,7 @@ function AdminLogin() {
         if (data.owner.ownerPhone) {
           localStorage.setItem("ownerPhone", data.owner.ownerPhone);
         }
-        
+
         console.log("Session stored, navigating to dashboard...");
         navigate("/admindashboard");
       } else {
@@ -212,7 +212,7 @@ function AdminLogin() {
         return;
       }
       setForgotMessage(
-        data.message || "✅ Reset instructions sent. Check your phone/email."
+        data.message || "✅ Reset instructions sent. Check your phone/email.",
       );
     } catch (e) {
       setForgotMessage("Network error. Please try again.");
@@ -236,11 +236,11 @@ function AdminLogin() {
             color: "var(--text-primary)",
           }}
         >
-          {/* YABAnect branding like user login */}
+          {/* YABAlink branding like user login */}
           <div style={{ marginBottom: 18, textAlign: "center" }}>
             <img
-              src="/YABA.svg"
-              alt="YABA Logo"
+              src="/yabalink logo mono.svg"
+              alt="YABAlink Logo"
               style={{
                 width: 96,
                 height: 96,
@@ -262,7 +262,15 @@ function AdminLogin() {
                 fontFamily: "system-ui, -apple-system, sans-serif",
               }}
             >
-              YABAnect
+              YABA
+              <span
+                style={{
+                  fontFamily: '"Adobe Song Std", "Songti SC", serif',
+                  fontStyle: "italic",
+                }}
+              >
+                link
+              </span>
             </h1>
             <div
               style={{
@@ -339,14 +347,23 @@ function AdminLogin() {
             </div>
 
             <div style={styles.forgotPassword}>
-              <button type="button" onClick={() => navigate('/forgot-password')} style={{ ...styles.forgotLink, background: 'transparent', border: 'none', cursor: 'pointer' }}>
+              <button
+                type="button"
+                onClick={() => navigate("/forgot-password")}
+                style={{
+                  ...styles.forgotLink,
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
                 Forgot Password?
               </button>
             </div>
             {/* Inline forgot removed in favor of full reset page */}
 
-            <button 
-              onClick={handleLogin} 
+            <button
+              onClick={handleLogin}
               className="yaba-btn yaba-btn--accent"
               style={{ width: "100%" }}
               disabled={isLoading}
@@ -477,8 +494,8 @@ function AdminLogin() {
               }}
             >
               <img
-                src="/YABA.svg"
-                alt="YABA"
+                src="/yabanect logo.svg"
+                alt="YABAnect"
                 style={{ height: 32, objectFit: "contain" }}
               />
             </div>

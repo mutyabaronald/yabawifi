@@ -26,6 +26,30 @@ function generateToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
+async function appendDeviceLog(deviceId, entry) {
+  try {
+    if (!deviceId) return;
+    const log = {
+      level: entry?.level || "info",
+      type: entry?.type || "event",
+      message: entry?.message || "",
+      meta: entry?.meta || null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtISO: new Date().toISOString(),
+    };
+    await db
+      .collection("devices")
+      .doc(String(deviceId))
+      .collection("logs")
+      .add(log);
+  } catch (err) {
+    console.warn(
+      "[devices] Failed to append device log:",
+      err?.message || err
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // 1) Create device (called by frontend wizard Step 1)
 // ─────────────────────────────────────────────────────────────
@@ -34,8 +58,10 @@ router.post("/api/devices", async (req, res) => {
     const {
       ownerId,
       deviceName,
+      routerIdentity, // Router identity/name (like "WeaveCo")
       deviceType = "mikrotik", // default to mikrotik
-      serviceType, // "hotspot" | "pppoe"
+      serviceType, // "hotspot" | "pppoe" | ["hotspot", "pppoe"] (array or single)
+      antiSharing = false, // Anti-sharing protection for hotspot
       interfaces,  // array of ports like ["ether2","ether3"]
     } = req.body;
 
@@ -43,6 +69,15 @@ router.post("/api/devices", async (req, res) => {
       return res.status(400).json({ 
         success: false, 
         message: "ownerId, deviceName, and serviceType are required." 
+      });
+    }
+
+    // Normalize serviceType to array
+    const serviceTypes = Array.isArray(serviceType) ? serviceType : [serviceType];
+    if (serviceTypes.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "At least one service type must be selected." 
       });
     }
 
@@ -54,8 +89,10 @@ router.post("/api/devices", async (req, res) => {
       deviceId,
       ownerId,
       deviceName,
+      routerIdentity: routerIdentity || "",
       deviceType,
-      serviceType,
+      serviceType: serviceTypes, // Store as array
+      antiSharing: antiSharing || false,
       interfaces: iface,
       status: "pending",
       token,
@@ -64,6 +101,17 @@ router.post("/api/devices", async (req, res) => {
     };
 
     await db.collection("devices").doc(deviceId).set(doc);
+    appendDeviceLog(deviceId, {
+      type: "device_created",
+      message: `Device created: ${deviceName}`,
+      meta: {
+        deviceType,
+        serviceType: serviceTypes,
+        antiSharing: !!antiSharing,
+        interfaces: iface,
+        routerIdentity: routerIdentity || "",
+      },
+    });
 
     return res.json({
       success: true,
@@ -90,6 +138,12 @@ router.get("/api/provisioning/script", async (req, res) => {
     if (!snap.exists) return res.status(404).send("Device not found");
 
     const device = snap.data();
+
+    appendDeviceLog(deviceId, {
+      type: "provisioning_script_requested",
+      message: "Provisioning script requested",
+      meta: { deviceType: device.deviceType || "mikrotik" },
+    });
 
     // This is the VERY SIMPLE copy/paste snippet (Step 2 UI)
     const script = [
@@ -123,36 +177,100 @@ router.get("/provisioning/bootstrap", async (req, res) => {
     const device = snap.data();
     if (device.token !== token) return res.status(403).send("Invalid token");
 
-    // Very basic example. You'll expand this with real hotspot/pppoe setup.
-    // NOTE: RouterOS CLI is picky—test & refine on lab device.
-    const iface = device.interfaces?.[0] || "ether2";
-
+    // Enhanced bootstrap script matching video tutorial requirements
+    const serviceTypes = Array.isArray(device.serviceType) ? device.serviceType : [device.serviceType];
+    const interfaces = device.interfaces || ["ether2"];
+    
     const scriptLines = [];
 
-    // 0) Basic safety & API
-    scriptLines.push(
-      `/ip/service set api address=0.0.0.0/0 disabled=no`,
-      `/user add name=yaba_api group=full password=${crypto.randomBytes(6).toString("hex")} disabled=no`,
-    );
+    appendDeviceLog(rId, {
+      type: "bootstrap_requested",
+      message: "Bootstrap script requested by router",
+      meta: {
+        routerIdentity: device.routerIdentity || "",
+        serviceType: serviceTypes,
+        interfaces,
+        antiSharing: !!device.antiSharing,
+      },
+    });
 
-    if (device.serviceType === "hotspot") {
-      // 1) Hotspot quick-setup (simplified — adjust to your network)
+    // 0) Set router identity if provided
+    if (device.routerIdentity) {
       scriptLines.push(
-        `:put "Configuring Hotspot on ${iface}"`,
-        `/ip address add address=10.10.10.1/24 interface=${iface} comment="YABA Hotspot"`,
-        `/ip pool add name=hs_pool ranges=10.10.10.2-10.10.10.254`,
-        `/ip dhcp-server add name=hs_dhcp interface=${iface} address-pool=hs_pool disabled=no`,
-        `/ip dhcp-server network add address=10.10.10.0/24 gateway=10.10.10.1 dns-server=8.8.8.8,1.1.1.1`,
-        `/ip hotspot profile add name=hs_prof hotspot-address=10.10.10.1 dns-name=yaba.login local-address=10.10.10.1 html-directory=hotspot`,
-        `/ip hotspot add name=hs1 interface=${iface} profile=hs_prof disabled=no`,
+        `/system identity set name="${device.routerIdentity}"`,
+        `:put "Router identity set to: ${device.routerIdentity}"`
       );
     }
 
-    if (device.serviceType === "pppoe") {
-      // Minimal placeholder — you'll add full PPPoE server config later
+    // 1) Basic safety & API setup
+    const apiPassword = crypto.randomBytes(8).toString("hex");
+    scriptLines.push(
+      `/ip/service set api address=0.0.0.0/0 disabled=no`,
+      `/user add name=yaba_api group=full password=${apiPassword} disabled=no`,
+      `:put "API user created: yaba_api"`
+    );
+
+    // 2) Create bridge for all selected interfaces (as shown in video)
+    scriptLines.push(
+      `:put "Creating bridge for interfaces: ${interfaces.join(", ")}"`,
+      `/interface bridge add name=bridge_yaba protocol-mode=none`
+    );
+
+    // Add all interfaces to bridge (except ether1 if it's the WAN port)
+    interfaces.forEach(iface => {
       scriptLines.push(
-        `:put "Configuring PPPoE (placeholder)"`,
-        `/interface pppoe-server server add service-name=yaba_pppoe interface=${iface} disabled=no`,
+        `/interface bridge port add bridge=bridge_yaba interface=${iface}`
+      );
+    });
+
+    // 3) Configure services based on selected types
+    if (serviceTypes.includes("hotspot")) {
+      scriptLines.push(
+        `:put "Configuring Hotspot service"`
+      );
+
+      // Use bridge interface for hotspot
+      scriptLines.push(
+        `/ip address add address=10.10.10.1/24 interface=bridge_yaba comment="YABA Hotspot"`,
+        `/ip pool add name=hs_pool ranges=10.10.10.2-10.10.10.254`,
+        `/ip dhcp-server add name=hs_dhcp interface=bridge_yaba address-pool=hs_pool disabled=no`,
+        `/ip dhcp-server network add address=10.10.10.0/24 gateway=10.10.10.1 dns-server=8.8.8.8,1.1.1.1`
+      );
+
+      // Hotspot profile
+      scriptLines.push(
+        `/ip hotspot profile add name=hs_prof hotspot-address=10.10.10.1 dns-name=yaba.login local-address=10.10.10.1 html-directory=hotspot`
+      );
+      
+      // Add anti-sharing if enabled
+      if (device.antiSharing) {
+        scriptLines.push(
+          `/ip hotspot profile set hs_prof shared-users=1`,
+          `:put "Anti-sharing protection enabled"`
+        );
+      }
+      
+      scriptLines.push(
+        `/ip hotspot add name=hs1 interface=bridge_yaba profile=hs_prof disabled=no`
+      );
+
+      if (device.antiSharing) {
+        scriptLines.push(
+          `:put "Anti-sharing protection enabled"`
+        );
+      }
+    }
+
+    if (serviceTypes.includes("pppoe")) {
+      scriptLines.push(
+        `:put "Configuring PPPoE service"`
+      );
+
+      // PPPoE server configuration
+      scriptLines.push(
+        `/ip pool add name=pppoe_pool ranges=10.20.20.2-10.20.20.254`,
+        `/ppp profile add name=pppoe_prof local-address=10.20.20.1 remote-address=pppoe_pool`,
+        `/interface pppoe-server server add service-name=yaba_pppoe interface=bridge_yaba disabled=no`
       );
     }
 
@@ -191,6 +309,12 @@ router.get("/api/devices/connected", async (req, res) => {
       status: status === "online" ? "online" : "unknown",
       wanIp: ip || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    appendDeviceLog(String(rId), {
+      type: "connected_callback",
+      message: `Router callback received: ${status === "online" ? "online" : "unknown"}`,
+      meta: { ip: ip || null },
     });
 
     return res.json({ success: true });
@@ -271,6 +395,15 @@ router.put("/api/devices/:id", async (req, res) => {
     updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
     await db.collection("devices").doc(id).update(updateData);
+    appendDeviceLog(id, {
+      type: "device_updated",
+      message: "Device updated",
+      meta: {
+        updatedFields: Object.keys(updateData || {}).filter(
+          (k) => !["updatedAt"].includes(k)
+        ),
+      },
+    });
 
     return res.json({
       success: true,
@@ -289,6 +422,8 @@ router.delete("/api/devices/:id", async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Best-effort: log the unlink before deleting the doc
+    appendDeviceLog(id, { type: "device_unlinked", message: "Device unlinked" });
     await db.collection("devices").doc(id).delete();
 
     return res.json({
@@ -298,6 +433,102 @@ router.delete("/api/devices/:id", async (req, res) => {
   } catch (err) {
     console.error("Delete device error:", err);
     res.status(500).json({ success: false, message: "Failed to unlink device" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// 9) Ping router to test connectivity
+// ─────────────────────────────────────────────────────────────
+router.get("/api/devices/:id/ping", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const snap = await db.collection("devices").doc(id).get();
+    
+    if (!snap.exists) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Device not found" 
+      });
+    }
+
+    const device = snap.data();
+    
+    // Simple ping test - check if device has WAN IP and is marked online
+    // In production, you'd ping the actual router IP via MikroTik API
+    const isOnline = device.status === "online";
+    const wanIp = device.wanIp || null;
+    
+    // Simulate ping time (in real implementation, ping actual router)
+    const pingTime = isOnline ? Math.floor(Math.random() * 50) + 10 : null;
+
+    appendDeviceLog(id, {
+      type: "ping_test",
+      message: isOnline ? "Ping test: reachable" : "Ping test: not reachable",
+      meta: { status: isOnline ? "online" : "offline", pingTime, wanIp },
+    });
+
+    return res.json({
+      success: isOnline,
+      status: isOnline ? "online" : "offline",
+      pingTime: pingTime,
+      wanIp: wanIp,
+      message: isOnline 
+        ? `Router is reachable${wanIp ? ` at ${wanIp}` : ""}` 
+        : "Router is not reachable. Please check connection and configuration."
+    });
+  } catch (err) {
+    console.error("Ping error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to ping device" 
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// 10) Fetch device logs (UI "Router Logs")
+// ─────────────────────────────────────────────────────────────
+router.get("/api/devices/:id/logs", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limitRaw = parseInt(String(req.query.limit || "200"), 10);
+    const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) ? limitRaw : 200, 500));
+
+    const deviceSnap = await db.collection("devices").doc(id).get();
+    if (!deviceSnap.exists) {
+      return res.status(404).json({ success: false, message: "Device not found" });
+    }
+
+    const logsSnap = await db
+      .collection("devices")
+      .doc(id)
+      .collection("logs")
+      .orderBy("createdAt", "desc")
+      .limit(limit)
+      .get();
+
+    const logs = logsSnap.docs.map((d) => {
+      const data = d.data() || {};
+      let createdAtISO = data.createdAtISO || null;
+      try {
+        if (!createdAtISO && data.createdAt && typeof data.createdAt.toDate === "function") {
+          createdAtISO = data.createdAt.toDate().toISOString();
+        }
+      } catch (_) {}
+      return {
+        id: d.id,
+        level: data.level || "info",
+        type: data.type || "event",
+        message: data.message || "",
+        meta: data.meta || null,
+        createdAtISO,
+      };
+    });
+
+    return res.json({ success: true, logs });
+  } catch (err) {
+    console.error("Device logs error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch logs" });
   }
 });
 

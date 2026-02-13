@@ -442,7 +442,12 @@ function Login() {
             <img
               src="/yabalink logo mono.svg"
               alt="YABAlink Logo"
-              style={styles.logoImage}
+              style={{
+                ...styles.logoImage,
+                width: 80,
+                height: 80,
+                objectFit: "contain",
+              }}
             />
             <h1
               style={{

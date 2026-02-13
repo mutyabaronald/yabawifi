@@ -168,9 +168,9 @@ export default function ForgotPassword() {
       marginBottom: "18px",
     },
     logo: {
-      width: "96px",
-      height: "96px",
-      objectFit: "cover",
+      width: "80px",
+      height: "80px",
+      objectFit: "contain",
       borderRadius: "50%",
       border: "none",
       boxShadow: "none",

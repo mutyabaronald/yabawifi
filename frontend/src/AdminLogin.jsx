@@ -242,9 +242,9 @@ function AdminLogin() {
               src="/yabalink logo mono.svg"
               alt="YABAlink Logo"
               style={{
-                width: 96,
-                height: 96,
-                objectFit: "cover",
+                width: 80,
+                height: 80,
+                objectFit: "contain",
                 borderRadius: "50%",
                 border: "none",
                 boxShadow: "none",

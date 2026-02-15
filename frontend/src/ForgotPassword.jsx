@@ -303,7 +303,7 @@ export default function ForgotPassword() {
               link
             </span>
           </h1>
-          <div style={styles.tagline}>Connect. Experience. Belong.</div>
+          <div style={styles.tagline}>Fast. Reliable. Secure.</div>
         </div>
 
         <h2

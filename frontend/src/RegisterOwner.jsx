@@ -163,7 +163,7 @@ function RegisterOwner() {
               margin: "4px 0 0 0",
             }}
           >
-            Connect. Experience. Belong.
+            Fast. Reliable. Secure.
           </div>
           <div
             style={{

@@ -56,6 +56,7 @@ import OwnerReferrals from "./owner/OwnerReferrals";
 import { useTheme } from "./contexts/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
 import { formatUGX } from "./components/currency";
+import CiscoOnboardForm from "./components/CiscoOnboardForm";
 
 function OwnerHotspotsMap({ ownerId }) {
   const [map, setMap] = useState(null);
@@ -84,7 +85,7 @@ function OwnerHotspotsMap({ ownerId }) {
     (async () => {
       try {
         const res = await axios.get(
-          `http://localhost:5000/api/hotspots/owner/${ownerId}`
+          `http://localhost:5000/api/hotspots/owner/${ownerId}`,
         );
         const hs = res.data.hotspots || [];
         setHotspots(hs);
@@ -233,7 +234,7 @@ function AdminDashboard() {
       const d = new Date(t.date || t.createdAt || Date.now());
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
         2,
-        "0"
+        "0",
       )}`;
       if (!map[key]) map[key] = { credit: 0, withdrawal: 0 };
       const amt = Number(t.amount || 0);
@@ -294,7 +295,7 @@ function AdminDashboard() {
       });
     axios
       .get(
-        `http://localhost:5000/api/notifications/counts/${ownerId}?type=admin`
+        `http://localhost:5000/api/notifications/counts/${ownerId}?type=admin`,
       )
       .then((res) => {
         setUnreadCount((res.data && res.data.unreadCount) || 0);
@@ -326,7 +327,7 @@ function AdminDashboard() {
         label: h.name || h.id,
         id: h.id,
         section: "hotspots",
-      })
+      }),
     );
     // devices
     (devicesView.devices || []).forEach((d) =>
@@ -335,7 +336,7 @@ function AdminDashboard() {
         label: d.deviceName || d.deviceId,
         id: d.deviceId,
         section: "devices",
-      })
+      }),
     );
     // packages
     (packages || []).forEach((p) =>
@@ -344,25 +345,23 @@ function AdminDashboard() {
         label: p.packageName || p.name,
         id: p.id,
         section: "packages",
-      })
+      }),
     );
     // transactions (recent)
-    (walletTx || [])
-      .slice(0, 50)
-      .forEach((t, i) =>
-        items.push({
-          kind: "Transaction",
-          label: `${t.type || "payment"} ${formatUGX(t.amount)}`,
-          id: String(i),
-          section: "payments",
-        })
-      );
+    (walletTx || []).slice(0, 50).forEach((t, i) =>
+      items.push({
+        kind: "Transaction",
+        label: `${t.type || "payment"} ${formatUGX(t.amount)}`,
+        id: String(i),
+        section: "payments",
+      }),
+    );
     return items;
   };
   const searchIndex = buildSearchIndex();
   const searchResults = searchIndex
     .filter((it) =>
-      (it.label || "").toLowerCase().includes(searchQuery.toLowerCase())
+      (it.label || "").toLowerCase().includes(searchQuery.toLowerCase()),
     )
     .slice(0, 8);
   const goToSearchItem = (it) => {
@@ -541,7 +540,7 @@ function AdminDashboard() {
   const fetchHotspots = async (oid) => {
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/hotspots/owner/${oid}`
+        `http://localhost:5000/api/hotspots/owner/${oid}`,
       );
       const hotspots = res.data.hotspots || [];
       setDevicesView((s) => ({
@@ -564,7 +563,7 @@ function AdminDashboard() {
   const fetchHotspotsForOwner = async () => {
     try {
       const response = await axios.get(
-        `http://localhost:5000/api/hotspots/owner/${ownerId}`
+        `http://localhost:5000/api/hotspots/owner/${ownerId}`,
       );
       setHotspots(response.data?.hotspots || response.data || []);
     } catch (error) {
@@ -582,7 +581,7 @@ function AdminDashboard() {
 
     console.log(
       "Setting up API-based voucher statistics polling for ownerId:",
-      ownerId
+      ownerId,
     );
 
     // Use API polling instead of Firebase due to permission issues
@@ -590,7 +589,7 @@ function AdminDashboard() {
       try {
         console.log("Polling for voucher statistics...");
         const response = await fetch(
-          `http://localhost:5000/api/vouchers/owner/${ownerId}`
+          `http://localhost:5000/api/vouchers/owner/${ownerId}`,
         );
         const data = await response.json();
 
@@ -601,7 +600,7 @@ function AdminDashboard() {
               .length,
             totalRedemptions: vouchers.reduce(
               (sum, v) => sum + (v.usageCount || 0),
-              0
+              0,
             ),
             expired: vouchers.filter((v) => v.status === "expired").length,
             usageRate:
@@ -609,7 +608,7 @@ function AdminDashboard() {
                 ? Math.round(
                     (vouchers.filter((v) => v.status === "redeemed").length /
                       vouchers.length) *
-                      100
+                      100,
                   )
                 : 0,
           };
@@ -634,7 +633,7 @@ function AdminDashboard() {
     try {
       console.log("Fetching voucher stats via API for ownerId:", ownerId);
       const response = await fetch(
-        `http://localhost:5000/api/vouchers/owner/${ownerId}`
+        `http://localhost:5000/api/vouchers/owner/${ownerId}`,
       );
       const data = await response.json();
 
@@ -644,7 +643,7 @@ function AdminDashboard() {
           activeVouchers: vouchers.filter((v) => v.status === "active").length,
           totalRedemptions: vouchers.reduce(
             (sum, v) => sum + (v.usageCount || 0),
-            0
+            0,
           ),
           expired: vouchers.filter((v) => v.status === "expired").length,
           usageRate:
@@ -652,7 +651,7 @@ function AdminDashboard() {
               ? Math.round(
                   (vouchers.filter((v) => v.status === "redeemed").length /
                     vouchers.length) *
-                    100
+                    100,
                 )
               : 0,
         };
@@ -676,7 +675,7 @@ function AdminDashboard() {
     setDevicesView((s) => ({ ...s, loading: true, error: "" }));
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/hotspots/${hotspotId}/devices`
+        `http://localhost:5000/api/hotspots/${hotspotId}/devices`,
       );
       setDevicesView((s) => ({
         ...s,
@@ -685,7 +684,7 @@ function AdminDashboard() {
         loading: false,
       }));
       const found = ((s) => (s.hotspots || []).find((h) => h.id === hotspotId))(
-        devicesView
+        devicesView,
       );
       setSelectedHotspot(found || null);
     } catch (e) {
@@ -702,7 +701,7 @@ function AdminDashboard() {
     if (!window.confirm("Remove this device?")) return;
     try {
       await axios.delete(
-        `/api/hotspots/${devicesView.selectedHotspotId}/devices/${deviceId}`
+        `/api/hotspots/${devicesView.selectedHotspotId}/devices/${deviceId}`,
       );
       fetchDevices(devicesView.selectedHotspotId);
     } catch (e) {
@@ -713,10 +712,10 @@ function AdminDashboard() {
   const canNextFromHsStep1 = () =>
     Boolean(
       hsName &&
-        hsRouterType &&
-        hsHotspotType &&
-        !Number.isNaN(Number(hsLat)) &&
-        !Number.isNaN(Number(hsLng))
+      hsRouterType &&
+      hsHotspotType &&
+      !Number.isNaN(Number(hsLat)) &&
+      !Number.isNaN(Number(hsLng)),
     );
   const createHotspot = async () => {
     if (hsCreating) return;
@@ -759,7 +758,7 @@ function AdminDashboard() {
           macAddress: linkMac,
           routerId: linkRouterId,
           nickname: linkNickname,
-        }
+        },
       );
       setShowLinkDeviceModal(false);
       fetchDevices(devicesView.selectedHotspotId);
@@ -777,7 +776,7 @@ function AdminDashboard() {
   const fetchDevicesForOwner = async () => {
     try {
       const response = await axios.get(
-        `http://localhost:5000/api/devices/owner/${ownerId}`
+        `http://localhost:5000/api/devices/owner/${ownerId}`,
       );
       if (response.data.success) {
         setDevices(response.data.devices);
@@ -812,7 +811,7 @@ function AdminDashboard() {
         setRouterLogsError("");
       }
       const res = await axios.get(
-        `http://localhost:5000/api/devices/${device.deviceId}/logs?limit=200`
+        `http://localhost:5000/api/devices/${device.deviceId}/logs?limit=200`,
       );
       if (res.data?.success) {
         setRouterLogs(res.data.logs || []);
@@ -825,7 +824,7 @@ function AdminDashboard() {
       setRouterLogsError(
         err?.response?.data?.message ||
           err?.message ||
-          "Failed to load router logs"
+          "Failed to load router logs",
       );
     } finally {
       if (!silent) setRouterLogsLoading(false);
@@ -857,8 +856,8 @@ function AdminDashboard() {
       serviceType: Array.isArray(device.serviceType)
         ? device.serviceType
         : device.serviceType
-        ? [device.serviceType]
-        : ["hotspot"],
+          ? [device.serviceType]
+          : ["hotspot"],
       antiSharing: device.antiSharing || false,
       interfaces: device.interfaces || [],
       location: device.location || null,
@@ -923,7 +922,7 @@ function AdminDashboard() {
       // Fetch both reviews and statistics
       const [reviewsResponse, statsResponse] = await Promise.all([
         axios.get(
-          `http://localhost:5000/api/reviews/owner/${ownerId}?${params}`
+          `http://localhost:5000/api/reviews/owner/${ownerId}?${params}`,
         ),
         axios.get(`http://localhost:5000/api/reviews/owner/${ownerId}/stats`),
       ]);
@@ -977,14 +976,14 @@ function AdminDashboard() {
     const totalReviews = reviewsData.length;
     // Handle both 'published' and 'approved' status values
     const published = reviewsData.filter(
-      (r) => r.status === "published" || r.status === "approved"
+      (r) => r.status === "published" || r.status === "approved",
     ).length;
     const responded = reviewsData.filter((r) => r.ownerResponse).length;
     const pending = reviewsData.filter((r) => r.status === "pending").length;
 
     const totalHelpful = reviewsData.reduce(
       (sum, r) => sum + (r.helpfulCount || 0),
-      0
+      0,
     );
 
     const ratingDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
@@ -1016,7 +1015,7 @@ function AdminDashboard() {
     try {
       const response = await axios.post(
         `http://localhost:5000/api/reviews/${reviewId}/${action}`,
-        data
+        data,
       );
       if (response.data.success) {
         fetchReviews(true); // Refresh reviews with reset pagination
@@ -1035,7 +1034,7 @@ function AdminDashboard() {
         {
           ownerId,
           reply: replyText.trim(),
-        }
+        },
       );
 
       if (response.data.success) {
@@ -1156,7 +1155,7 @@ function AdminDashboard() {
         formData.serviceType.length === 0
       ) {
         setDeviceError(
-          "Please fill in all required fields and select at least one service type"
+          "Please fill in all required fields and select at least one service type",
         );
         return;
       }
@@ -1165,7 +1164,7 @@ function AdminDashboard() {
       if (formData.interfaces.includes("ether1")) {
         if (
           !confirm(
-            "⚠️ Warning: Port 1 (ether1) is typically the WAN port receiving internet. Are you sure you want to include it? The video tutorial recommends excluding port 1."
+            "⚠️ Warning: Port 1 (ether1) is typically the WAN port receiving internet. Are you sure you want to include it? The video tutorial recommends excluding port 1.",
           )
         ) {
           return;
@@ -1179,7 +1178,7 @@ function AdminDashboard() {
         if (selectedDevice) {
           await axios.put(
             `http://localhost:5000/api/devices/${deviceId}`,
-            formData
+            formData,
           );
         } else {
           const response = await axios.post(
@@ -1187,7 +1186,7 @@ function AdminDashboard() {
             {
               ...formData,
               ownerId,
-            }
+            },
           );
 
           if (response.data.success) {
@@ -1198,7 +1197,7 @@ function AdminDashboard() {
         const scriptResponse = await axios.get(
           `http://localhost:5000/api/provisioning/script?deviceId=${
             deviceId || response.data.device.deviceId
-          }`
+          }`,
         );
         setProvisioningScript(scriptResponse.data);
 
@@ -1225,7 +1224,7 @@ function AdminDashboard() {
     const pollInterval = setInterval(async () => {
       try {
         const response = await axios.get(
-          `http://localhost:5000/api/devices/status/${deviceId}`
+          `http://localhost:5000/api/devices/status/${deviceId}`,
         );
         if (response.data.success) {
           const status = response.data.status;
@@ -1266,7 +1265,7 @@ function AdminDashboard() {
       const initialLng = Number(hsLng) || 32.5825;
       const map = L.map(addHsMapRef.current).setView(
         [initialLat, initialLng],
-        12
+        12,
       );
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
@@ -1358,7 +1357,7 @@ function AdminDashboard() {
               onlineDevices: 0,
               deviceTypes: {},
               hotspotDevices: {},
-            }
+            },
           );
         })
         .catch((error) => {
@@ -1412,26 +1411,26 @@ function AdminDashboard() {
       if (selectedHotspotId !== "all") {
         // Filter packages by hotspot
         filteredPackages = packages.filter(
-          (pkg) => pkg.hotspotId === selectedHotspotId
+          (pkg) => pkg.hotspotId === selectedHotspotId,
         );
         // Filter devices by hotspot
         filteredDevices = devices.filter(
-          (device) => device.hotspotId === selectedHotspotId
+          (device) => device.hotspotId === selectedHotspotId,
         );
       }
 
       // Calculate dashboard stats from filtered data
       const totalRevenue = filteredPackages.reduce(
         (sum, pkg) => sum + (pkg.price || 0),
-        0
+        0,
       );
       const totalCustomers = filteredDevices.length;
       const activeUsers = filteredDevices.filter(
-        (device) => device.status === "online"
+        (device) => device.status === "online",
       ).length;
       const dataUsed = filteredDevices.reduce(
         (sum, device) => sum + (device.dataUsed || 0),
-        0
+        0,
       );
 
       setDashboardStats({
@@ -1463,11 +1462,11 @@ function AdminDashboard() {
       setWithdrawAmount("");
       setMobileMoneyNumber("");
       const balRes = await axios.get(
-        `http://localhost:5000/api/owners/${ownerId}/wallet/balance`
+        `http://localhost:5000/api/owners/${ownerId}/wallet/balance`,
       );
       setWalletBalance(balRes.data.balance || 0);
       const txRes = await axios.get(
-        `http://localhost:5000/api/owners/${ownerId}/wallet/transactions`
+        `http://localhost:5000/api/owners/${ownerId}/wallet/transactions`,
       );
       setWalletTx(txRes.data.transactions || []);
     } catch (err) {
@@ -1558,7 +1557,7 @@ function AdminDashboard() {
       const fetchBrandingData = async () => {
         try {
           const response = await axios.get(
-            `/api/branding/${ownerId}/${selectedBrandingHotspot}`
+            `/api/branding/${ownerId}/${selectedBrandingHotspot}`,
           );
           if (response.data.success) {
             setBrandingData(response.data.branding);
@@ -1658,7 +1657,7 @@ function AdminDashboard() {
           headers: {
             "Content-Type": "application/json",
           },
-        }
+        },
       );
 
       if (response.ok) {
@@ -2333,7 +2332,7 @@ function AdminDashboard() {
                     dashboardStats.totalRevenue ||
                       walletTx
                         .filter((t) => t.type !== "withdrawal")
-                        .reduce((s, t) => s + Number(t.amount || 0), 0)
+                        .reduce((s, t) => s + Number(t.amount || 0), 0),
                   )}
                 </div>
               </div>
@@ -2473,8 +2472,8 @@ function AdminDashboard() {
                                 {n.createdAt
                                   ? new Date(n.createdAt).toLocaleString()
                                   : n.date
-                                  ? new Date(n.date).toLocaleString()
-                                  : ""}
+                                    ? new Date(n.date).toLocaleString()
+                                    : ""}
                               </span>
                             </div>
                             <div style={{ color: "var(--text-primary)" }}>
@@ -2673,7 +2672,7 @@ function AdminDashboard() {
                     onChange={(e) => {
                       setSelectedHotspotId(e.target.value);
                       const hotspot = hotspots.find(
-                        (h) => h.id === e.target.value
+                        (h) => h.id === e.target.value,
                       );
                       setSelectedHotspot(hotspot || null);
                     }}
@@ -3158,7 +3157,7 @@ function AdminDashboard() {
                           📍{" "}
                           {hotspot.location
                             ? `${hotspot.location.lat?.toFixed(
-                                4
+                                4,
                               )}, ${hotspot.location.lng?.toFixed(4)}`
                             : "Location not set"}
                         </p>
@@ -3506,7 +3505,7 @@ function AdminDashboard() {
                     onChange={(e) => {
                       setSelectedHotspotId(e.target.value);
                       const hotspot = hotspots.find(
-                        (h) => h.id === e.target.value
+                        (h) => h.id === e.target.value,
                       );
                       setSelectedHotspot(hotspot || null);
                     }}
@@ -4322,7 +4321,13 @@ function AdminDashboard() {
                             >
                               {device.deviceType === "mikrotik"
                                 ? "MikroTik"
-                                : device.deviceType}
+                                : device.deviceType === "tp-link"
+                                  ? "TP-Link"
+                                  : device.deviceType === "ubiquiti"
+                                    ? "Ubiquiti"
+                                    : device.deviceType === "cisco"
+                                      ? "Cisco"
+                                      : device.deviceType}
                             </span>
                             {Array.isArray(device.serviceType) ? (
                               device.serviceType.map((st) => (
@@ -4505,27 +4510,27 @@ function AdminDashboard() {
                           onClick={async () => {
                             try {
                               const response = await axios.get(
-                                `http://localhost:5000/api/devices/${device.deviceId}/ping`
+                                `http://localhost:5000/api/devices/${device.deviceId}/ping`,
                               );
                               if (response.data.success) {
                                 alert(
                                   `✅ Router is reachable!\n\nResponse time: ${
                                     response.data.pingTime || "N/A"
-                                  }ms\nStatus: ${response.data.status}`
+                                  }ms\nStatus: ${response.data.status}`,
                                 );
                               } else {
                                 alert(
                                   `❌ Router is not reachable.\n\n${
                                     response.data.message ||
                                     "Please check the router connection and configuration."
-                                  }`
+                                  }`,
                                 );
                               }
                             } catch (err) {
                               alert(
                                 `❌ Ping test failed: ${
                                   err.response?.data?.message || err.message
-                                }`
+                                }`,
                               );
                             }
                           }}
@@ -4596,6 +4601,8 @@ function AdminDashboard() {
                   ))}
                 </div>
               )}
+              {/* Cisco Onboarding helper */}
+              <CiscoOnboardForm />
             </div>
           )}
 
@@ -4736,9 +4743,9 @@ function AdminDashboard() {
                           (t) =>
                             t.type !== "withdrawal" &&
                             new Date(t.date || t.createdAt || 0).getMonth() ===
-                              new Date().getMonth()
+                              new Date().getMonth(),
                         )
-                        .reduce((s, t) => s + Number(t.amount || 0), 0)
+                        .reduce((s, t) => s + Number(t.amount || 0), 0),
                     )}
                   </div>
                   <div
@@ -4768,7 +4775,7 @@ function AdminDashboard() {
                     {formatUGX(
                       walletTx
                         .filter((t) => t.type === "withdrawal")
-                        .reduce((s, t) => s + Number(t.amount || 0), 0)
+                        .reduce((s, t) => s + Number(t.amount || 0), 0),
                     )}
                   </div>
                   <div
@@ -4795,9 +4802,9 @@ function AdminDashboard() {
                       walletTx.length
                         ? walletTx.reduce(
                             (s, t) => s + Number(t.amount || 0),
-                            0
+                            0,
                           ) / walletTx.length
-                        : 0
+                        : 0,
                     )}
                   </div>
                 </div>
@@ -4814,8 +4821,8 @@ function AdminDashboard() {
                   const max = Math.max(
                     1,
                     ...keys.map((k) =>
-                      Math.max(agg[k].credit, agg[k].withdrawal)
-                    )
+                      Math.max(agg[k].credit, agg[k].withdrawal),
+                    ),
                   );
                   return (
                     <div
@@ -4823,7 +4830,7 @@ function AdminDashboard() {
                         display: "grid",
                         gridTemplateColumns: `repeat(${Math.max(
                           keys.length,
-                          1
+                          1,
                         )}, 1fr)`,
                         gap: 8,
                         alignItems: "end",
@@ -4857,7 +4864,7 @@ function AdminDashboard() {
                             />
                             <div
                               title={`Withdrawals ${formatUGX(
-                                agg[k].withdrawal
+                                agg[k].withdrawal,
                               )}`}
                               style={{
                                 width: "50%",
@@ -5424,7 +5431,7 @@ function AdminDashboard() {
                           const percentage =
                             deviceStats.totalDevices > 0
                               ? Math.round(
-                                  (count / deviceStats.totalDevices) * 100
+                                  (count / deviceStats.totalDevices) * 100,
                                 )
                               : 0;
                           return (
@@ -5452,7 +5459,7 @@ function AdminDashboard() {
                               </div>
                             </div>
                           );
-                        }
+                        },
                       )
                     )}
                   </div>
@@ -5733,7 +5740,7 @@ function AdminDashboard() {
                         const dayRevenue = walletTx
                           .filter((tx) => {
                             const txDate = new Date(
-                              tx.date || tx.createdAt || Date.now()
+                              tx.date || tx.createdAt || Date.now(),
                             );
                             return (
                               txDate.toDateString() === date.toDateString() &&
@@ -5748,7 +5755,7 @@ function AdminDashboard() {
                       }
                       const maxValue = Math.max(
                         1,
-                        ...last7Days.map((d) => d.value)
+                        ...last7Days.map((d) => d.value),
                       );
                       return last7Days.map((day, i) => (
                         <div
@@ -5807,7 +5814,7 @@ function AdminDashboard() {
                           .filter(
                             (tx) =>
                               tx.hotspotId === hotspot.id &&
-                              tx.type !== "withdrawal"
+                              tx.type !== "withdrawal",
                           )
                           .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
                         const performance =
@@ -5922,7 +5929,9 @@ function AdminDashboard() {
                         const packageSales = walletTx.filter(
                           (tx) =>
                             tx.description &&
-                            tx.description.includes(pkg.packageName || pkg.name)
+                            tx.description.includes(
+                              pkg.packageName || pkg.name,
+                            ),
                         ).length;
                         const growthRate =
                           packageSales > 0
@@ -5997,7 +6006,7 @@ function AdminDashboard() {
                         const hourNum = parseInt(hour);
                         const usage = walletTx.filter((tx) => {
                           const txDate = new Date(
-                            tx.date || tx.createdAt || Date.now()
+                            tx.date || tx.createdAt || Date.now(),
                           );
                           return (
                             txDate.getHours() >= hourNum &&
@@ -6008,7 +6017,7 @@ function AdminDashboard() {
                       });
                       const maxUsage = Math.max(
                         1,
-                        ...usageData.map((d) => d.usage)
+                        ...usageData.map((d) => d.usage),
                       );
                       return usageData.map((data, i) => (
                         <div
@@ -6134,16 +6143,16 @@ function AdminDashboard() {
                             .filter(
                               (tx) =>
                                 tx.hotspotId === hotspot.id &&
-                                tx.type !== "withdrawal"
+                                tx.type !== "withdrawal",
                             )
                             .reduce(
                               (sum, tx) => sum + Number(tx.amount || 0),
-                              0
+                              0,
                             );
                           const users = walletTx.filter(
                             (tx) =>
                               tx.hotspotId === hotspot.id &&
-                              tx.type !== "withdrawal"
+                              tx.type !== "withdrawal",
                           ).length;
                           const utilization =
                             users > 0 ? Math.min(100, (users / 10) * 10) : 0; // Scale based on actual usage
@@ -6151,18 +6160,18 @@ function AdminDashboard() {
                             utilization > 80
                               ? "Excellent"
                               : utilization > 60
-                              ? "Good"
-                              : utilization > 0
-                              ? "Fair"
-                              : "No Activity";
+                                ? "Good"
+                                : utilization > 0
+                                  ? "Fair"
+                                  : "No Activity";
                           const perfColor =
                             utilization > 80
                               ? "#16a34a"
                               : utilization > 60
-                              ? "#d97706"
-                              : utilization > 0
-                              ? "#f59e0b"
-                              : "#6b7280";
+                                ? "#d97706"
+                                : utilization > 0
+                                  ? "#f59e0b"
+                                  : "#6b7280";
                           return (
                             <tr
                               key={i}
@@ -6864,7 +6873,7 @@ function AdminDashboard() {
                       const count = reviewStats.ratingDistribution[rating] || 0;
                       const isActive = count > 0;
                       const maxCount = Math.max(
-                        ...Object.values(reviewStats.ratingDistribution)
+                        ...Object.values(reviewStats.ratingDistribution),
                       );
                       const percentage =
                         maxCount > 0 ? (count / maxCount) * 100 : 0;
@@ -7439,8 +7448,8 @@ function AdminDashboard() {
                                 review.status === "approved"
                                   ? "var(--success)"
                                   : review.status === "pending"
-                                  ? "var(--warning)"
-                                  : "var(--danger)",
+                                    ? "var(--warning)"
+                                    : "var(--danger)",
                               color: "#ffffff",
                               borderRadius: "12px",
                               fontSize: "10px",
@@ -7450,8 +7459,8 @@ function AdminDashboard() {
                             {review.status === "approved"
                               ? "Published"
                               : review.status === "pending"
-                              ? "Pending"
-                              : "Rejected"}
+                                ? "Pending"
+                                : "Rejected"}
                           </span>
                           {!review.ownerResponse && (
                             <button
@@ -7658,7 +7667,7 @@ function AdminDashboard() {
                     onChange={(e) => {
                       setSelectedHotspotId(e.target.value);
                       const hotspot = hotspots.find(
-                        (h) => h.id === e.target.value
+                        (h) => h.id === e.target.value,
                       );
                       setSelectedHotspot(hotspot || null);
                     }}
@@ -7754,11 +7763,11 @@ function AdminDashboard() {
                     >
                       {selectedHotspotId === "all"
                         ? devicesView.hotspots.filter(
-                            (h) => (h.status || "online") === "online"
+                            (h) => (h.status || "online") === "online",
                           ).length
                         : selectedHotspot?.status === "online"
-                        ? 1
-                        : 0}
+                          ? 1
+                          : 0}
                     </div>
                     <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
                       Online Hotspots
@@ -7801,7 +7810,7 @@ function AdminDashboard() {
                         : devices.filter(
                             (d) =>
                               d.hotspotId === selectedHotspotId &&
-                              d.status === "online"
+                              d.status === "online",
                           ).length}
                     </div>
                     <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
@@ -7846,15 +7855,15 @@ function AdminDashboard() {
                               (sum, tx) =>
                                 sum +
                                 (tx.type === "credit" ? tx.amount || 0 : 0),
-                              0
-                            )
+                              0,
+                            ),
                           )
                         : formatUGX(
                             packages
                               .filter(
-                                (pkg) => pkg.hotspotId === selectedHotspotId
+                                (pkg) => pkg.hotspotId === selectedHotspotId,
                               )
-                              .reduce((sum, pkg) => sum + (pkg.price || 0), 0)
+                              .reduce((sum, pkg) => sum + (pkg.price || 0), 0),
                           )}
                     </div>
                     <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
@@ -7962,7 +7971,7 @@ function AdminDashboard() {
                   selectedHotspotId === "all"
                     ? devicesView.hotspots
                     : devicesView.hotspots.filter(
-                        (h) => h.id === selectedHotspotId
+                        (h) => h.id === selectedHotspotId,
                       );
 
                 return filteredHotspots.length === 0 ? (
@@ -8032,7 +8041,7 @@ function AdminDashboard() {
                               📍{" "}
                               {hotspot.location
                                 ? `${hotspot.location.lat.toFixed(
-                                    4
+                                    4,
                                   )}, ${hotspot.location.lng.toFixed(4)}`
                                 : "Location not set"}
                             </p>
@@ -8448,8 +8457,8 @@ function AdminDashboard() {
                       {hsRouterType === "Mikrotik"
                         ? "Paste the Mikrotik script in Winbox terminal and set the HTTP login redirect to your Integration Link."
                         : hsHotspotType.startsWith("Unsupported")
-                        ? "Use the YABA Device provided by the system admin and configure captive portal to your Integration Link."
-                        : "Set router captive portal redirect to your Integration Link."}
+                          ? "Use the YABA Device provided by the system admin and configure captive portal to your Integration Link."
+                          : "Set router captive portal redirect to your Integration Link."}
                     </div>
                   </div>
                   <div
@@ -8852,7 +8861,7 @@ function AdminDashboard() {
                                     ...prev,
                                     serviceType: [
                                       ...prev.serviceType.filter(
-                                        (s) => s !== "hotspot"
+                                        (s) => s !== "hotspot",
                                       ),
                                       "hotspot",
                                     ],
@@ -8861,7 +8870,7 @@ function AdminDashboard() {
                                   setFormData((prev) => ({
                                     ...prev,
                                     serviceType: prev.serviceType.filter(
-                                      (s) => s !== "hotspot"
+                                      (s) => s !== "hotspot",
                                     ),
                                   }));
                                 }
@@ -8892,7 +8901,7 @@ function AdminDashboard() {
                                     ...prev,
                                     serviceType: [
                                       ...prev.serviceType.filter(
-                                        (s) => s !== "pppoe"
+                                        (s) => s !== "pppoe",
                                       ),
                                       "pppoe",
                                     ],
@@ -8901,7 +8910,7 @@ function AdminDashboard() {
                                   setFormData((prev) => ({
                                     ...prev,
                                     serviceType: prev.serviceType.filter(
-                                      (s) => s !== "pppoe"
+                                      (s) => s !== "pppoe",
                                     ),
                                   }));
                                 }
@@ -9164,7 +9173,9 @@ function AdminDashboard() {
                             }}
                           >
                             Select the interfaces where you want to enable{" "}
-                            {Array.isArray(formData.serviceType) ? formData.serviceType.join(" and ") : formData.serviceType}
+                            {Array.isArray(formData.serviceType)
+                              ? formData.serviceType.join(" and ")
+                              : formData.serviceType}
                           </small>
                         </label>
                       </div>
@@ -9234,8 +9245,37 @@ function AdminDashboard() {
                             }}
                           >
                             Select the interfaces where you want to enable{" "}
-                            {Array.isArray(formData.serviceType) ? formData.serviceType.join(" and ") : formData.serviceType}
+                            {Array.isArray(formData.serviceType)
+                              ? formData.serviceType.join(" and ")
+                              : formData.serviceType}
                           </small>
+                        </label>
+                      </div>
+                    )}
+
+                    {formData.deviceType === "cisco" && (
+                      <div style={{ marginBottom: 20 }}>
+                        <label
+                          style={{
+                            display: "block",
+                            marginBottom: 8,
+                            fontWeight: 500,
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          Network Interfaces
+                          <div
+                            style={{
+                              marginTop: 8,
+                              fontSize: 13,
+                              color: "var(--text-secondary)",
+                            }}
+                          >
+                            Interface-level QoS and AAA are managed directly on
+                            the Cisco router by the onboarding script and your
+                            network engineer. No interface selection is required
+                            here.
+                          </div>
                         </label>
                       </div>
                     )}
@@ -9308,6 +9348,29 @@ function AdminDashboard() {
                       </div>
                     )}
 
+                    {formData.deviceType === "cisco" && (
+                      <div
+                        style={{
+                          backgroundColor: "#e0f2fe",
+                          border: "1px solid #7dd3fc",
+                          borderRadius: 8,
+                          padding: 16,
+                          marginTop: 16,
+                        }}
+                      >
+                        <h4 style={{ margin: "0 0 8px 0", color: "#075985" }}>
+                          🛰️ Cisco Setup
+                        </h4>
+                        <p
+                          style={{ margin: 0, color: "#075985", fontSize: 14 }}
+                        >
+                          Use the Cisco onboarding form in the Devices section
+                          to connect over SSH and apply AAA + QoS bootstrap
+                          configuration to your Cisco IOS/IOS-XE router.
+                        </p>
+                      </div>
+                    )}
+
                     {/* Location Capture Section */}
                     <div style={{ marginTop: 20 }}>
                       <label
@@ -9357,16 +9420,16 @@ function AdminDashboard() {
                                 (error) => {
                                   console.error(
                                     "Location capture failed:",
-                                    error
+                                    error,
                                   );
                                   alert(
-                                    "Could not capture location. Please enter manually or try again."
+                                    "Could not capture location. Please enter manually or try again.",
                                   );
-                                }
+                                },
                               );
                             } else {
                               alert(
-                                "Geolocation is not supported by this browser."
+                                "Geolocation is not supported by this browser.",
                               );
                             }
                           }}
@@ -9481,10 +9544,12 @@ function AdminDashboard() {
                       {formData.deviceType === "mikrotik"
                         ? "Copy and paste this script into your MikroTik Winbox terminal for automatic configuration"
                         : formData.deviceType === "tp-link"
-                        ? "Follow these steps to configure your TP-Link router through the web interface"
-                        : formData.deviceType === "ubiquiti"
-                        ? "Configure your Ubiquiti device through the UniFi controller"
-                        : "Manual configuration instructions for your device"}
+                          ? "Follow these steps to configure your TP-Link router through the web interface"
+                          : formData.deviceType === "ubiquiti"
+                            ? "Configure your Ubiquiti device through the UniFi controller"
+                            : formData.deviceType === "cisco"
+                              ? "Use the Cisco onboarding form to run the AAA + QoS bootstrap over SSH on your Cisco router."
+                              : "Manual configuration instructions for your device"}
                     </p>
 
                     <div
@@ -9618,15 +9683,15 @@ function AdminDashboard() {
                               connectionStatus === "online"
                                 ? "#10b981"
                                 : connectionStatus === "pending"
-                                ? "#f59e0b"
-                                : "#ef4444",
+                                  ? "#f59e0b"
+                                  : "#ef4444",
                           }}
                         >
                           {connectionStatus === "online"
                             ? "✓"
                             : connectionStatus === "pending"
-                            ? "..."
-                            : "✕"}
+                              ? "..."
+                              : "✕"}
                         </div>
                         <div>
                           <h4
@@ -9638,8 +9703,8 @@ function AdminDashboard() {
                             {connectionStatus === "online"
                               ? "Device Connected Successfully!"
                               : connectionStatus === "pending"
-                              ? "Waiting for connection..."
-                              : "Connection failed"}
+                                ? "Waiting for connection..."
+                                : "Connection failed"}
                           </h4>
                           <p
                             style={{
@@ -9650,8 +9715,8 @@ function AdminDashboard() {
                             {connectionStatus === "online"
                               ? `Your ${formData.deviceName} is now online and configured`
                               : connectionStatus === "pending"
-                              ? "Please wait while we check the connection..."
-                              : "The device did not connect. Please check the script and try again."}
+                                ? "Please wait while we check the connection..."
+                                : "The device did not connect. Please check the script and try again."}
                           </p>
                         </div>
                       </div>
@@ -9953,11 +10018,16 @@ function AdminDashboard() {
                   </div>
                 )}
 
-                {!routerLogsError && routerLogs.length === 0 && !routerLogsLoading && (
-                  <div style={{ color: "var(--text-secondary)", fontSize: 14 }}>
-                    No logs yet. Run provisioning / connection check, then refresh.
-                  </div>
-                )}
+                {!routerLogsError &&
+                  routerLogs.length === 0 &&
+                  !routerLogsLoading && (
+                    <div
+                      style={{ color: "var(--text-secondary)", fontSize: 14 }}
+                    >
+                      No logs yet. Run provisioning / connection check, then
+                      refresh.
+                    </div>
+                  )}
 
                 {routerLogs.map((log) => (
                   <div

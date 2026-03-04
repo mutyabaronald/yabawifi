@@ -31,6 +31,8 @@ const ownersSupportRoutes = require("./routes/ownersSupport");
 const supportRoutes = require("./routes/support");
 const brandingRoutes = require("./routes/branding");
 const referralsRoutes = require("./routes/referrals");
+const ciscoRoutes = require("./routes/ciscoRoutes");
+require("./ciscoExpiryCron");
 
 const { v4: uuidv4 } = require("uuid");
 
@@ -46,7 +48,7 @@ if (
   console.log("✅ Twilio SMS service configured");
 } else {
   console.warn(
-    "⚠️  Twilio SMS service not fully configured. Forgot password via SMS will not work."
+    "⚠️  Twilio SMS service not fully configured. Forgot password via SMS will not work.",
   );
   console.warn("   Missing:", {
     accountSid: !process.env.TWILIO_ACCOUNT_SID ? "TWILIO_ACCOUNT_SID" : "",
@@ -84,15 +86,22 @@ app.get("/api/test/twilio", (req, res) => {
     hasAccountSid: !!process.env.TWILIO_ACCOUNT_SID,
     hasAuthToken: !!process.env.TWILIO_AUTH_TOKEN,
     hasServiceSid: !!process.env.TWILIO_VERIFY_SERVICE_SID,
-    accountSidPrefix: process.env.TWILIO_ACCOUNT_SID ? process.env.TWILIO_ACCOUNT_SID.substring(0, 5) : "N/A",
-    authTokenPrefix: process.env.TWILIO_AUTH_TOKEN ? process.env.TWILIO_AUTH_TOKEN.substring(0, 5) : "N/A",
-    serviceSidPrefix: process.env.TWILIO_VERIFY_SERVICE_SID ? process.env.TWILIO_VERIFY_SERVICE_SID.substring(0, 5) : "N/A",
+    accountSidPrefix: process.env.TWILIO_ACCOUNT_SID
+      ? process.env.TWILIO_ACCOUNT_SID.substring(0, 5)
+      : "N/A",
+    authTokenPrefix: process.env.TWILIO_AUTH_TOKEN
+      ? process.env.TWILIO_AUTH_TOKEN.substring(0, 5)
+      : "N/A",
+    serviceSidPrefix: process.env.TWILIO_VERIFY_SERVICE_SID
+      ? process.env.TWILIO_VERIFY_SERVICE_SID.substring(0, 5)
+      : "N/A",
     cwd: process.cwd(),
     nodeEnv: process.env.NODE_ENV,
   };
   res.json({
     message: "Twilio configuration check",
-    configured: config.hasAccountSid && config.hasAuthToken && config.hasServiceSid,
+    configured:
+      config.hasAccountSid && config.hasAuthToken && config.hasServiceSid,
     ...config,
   });
 });
@@ -118,6 +127,7 @@ app.use("/api/owners", ownersSupportRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/branding", brandingRoutes);
 app.use("/api/referrals", referralsRoutes);
+app.use("/api/devices/cisco", ciscoRoutes);
 app.use("/", devicesRoutes);
 app.use("/api/devices", deviceTrackingRoutes);
 
@@ -127,7 +137,7 @@ app.use(express.static(path.join(__dirname, "../frontend")));
 // Serve uploaded branding files
 app.use(
   "/uploads/branding",
-  express.static(path.join(__dirname, "uploads/branding"))
+  express.static(path.join(__dirname, "uploads/branding")),
 );
 
 // Health check endpoint for Render.com

@@ -407,6 +407,7 @@ function AdminDashboard() {
   const [deviceMessage, setDeviceMessage] = useState("");
   const [deviceError, setDeviceError] = useState("");
   const [currentStep, setCurrentStep] = useState(1);
+  const [showCiscoOnboard, setShowCiscoOnboard] = useState(false);
   const [showDeviceLogsModal, setShowDeviceLogsModal] = useState(false);
   const [logsDevice, setLogsDevice] = useState(null);
   const [routerLogs, setRouterLogs] = useState([]);
@@ -3847,6 +3848,74 @@ function AdminDashboard() {
                       Link Ubiquiti Device
                     </button>
                   </div>
+
+                  {/* Cisco Device */}
+                  <div
+                    className="yaba-card"
+                    style={{
+                      padding: "20px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        marginBottom: "12px",
+                      }}
+                    >
+                      <div style={{ fontSize: "24px" }}>🛰️</div>
+                      <div>
+                        <h4
+                          style={{
+                            margin: "0 0 4px 0",
+                            fontSize: "16px",
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          Cisco Router
+                        </h4>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "12px",
+                            color: "var(--text-muted)",
+                          }}
+                        >
+                          IOS / IOS-XE via SSH
+                        </p>
+                      </div>
+                    </div>
+                    <p
+                      style={{
+                        margin: "0 0 16px 0",
+                        fontSize: "14px",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      Connect Cisco routers with automated AAA and QoS bootstrap
+                      over SSH.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setShowCiscoOnboard(true);
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "10px 16px",
+                        background: "var(--accent)",
+                        color: "#ffffff",
+                        border: "none",
+                        borderRadius: "8px",
+                        cursor: "pointer",
+                        fontSize: "14px",
+                        fontWeight: "500",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      Link Cisco Router
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -4601,8 +4670,81 @@ function AdminDashboard() {
                   ))}
                 </div>
               )}
-              {/* Cisco Onboarding helper */}
-              <CiscoOnboardForm />
+              {/* Cisco Onboarding helper (modal) */}
+              {showCiscoOnboard && (
+                <div
+                  style={{
+                    position: "fixed",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: "rgba(0, 0, 0, 0.5)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 1100,
+                  }}
+                >
+                  <div
+                    style={{
+                      backgroundColor: "var(--surface)",
+                      borderRadius: 12,
+                      padding: 0,
+                      maxWidth: 640,
+                      width: "90%",
+                      maxHeight: "90vh",
+                      overflow: "hidden",
+                      display: "flex",
+                      flexDirection: "column",
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "16px 20px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        borderBottom: "1px solid var(--stroke)",
+                      }}
+                    >
+                      <h3
+                        style={{
+                          margin: 0,
+                          fontSize: 18,
+                          fontWeight: 600,
+                          color: "var(--text-primary)",
+                        }}
+                      >
+                        Cisco Router Onboarding
+                      </h3>
+                      <button
+                        onClick={() => setShowCiscoOnboard(false)}
+                        style={{
+                          border: "none",
+                          background: "transparent",
+                          cursor: "pointer",
+                          fontSize: 20,
+                          color: "var(--text-secondary)",
+                          padding: 4,
+                        }}
+                        aria-label="Close Cisco onboarding"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div
+                      style={{
+                        padding: 16,
+                        overflowY: "auto",
+                        background: "var(--surface-gradient)",
+                      }}
+                    >
+                      <CiscoOnboardForm />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

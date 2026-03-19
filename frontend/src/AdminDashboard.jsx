@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 // Removed direct Firestore imports - now using backend APIs
 import {
@@ -258,6 +259,8 @@ function AdminDashboard() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [notifFilter, setNotifFilter] = useState("all"); // all | email | sms | push | maintenance | payment | review
+  const notifMenuRef = useRef(null);
+  const notifTriggerRef = useRef(null);
 
   const deriveCategory = (n) => {
     const t = (n.type || n.category || "").toLowerCase();
@@ -280,6 +283,22 @@ function AdminDashboard() {
     if (m.includes("push")) return "push";
     return "inapp";
   };
+
+  // Close notification popup when clicking outside (portal or trigger)
+  useEffect(() => {
+    if (!showNotifMenu) return;
+    const close = (e) => {
+      const inMenu = notifMenuRef.current?.contains(e.target);
+      const inTrigger = notifTriggerRef.current?.contains(e.target);
+      if (!inMenu && !inTrigger) setShowNotifMenu(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("touchstart", close, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("touchstart", close);
+    };
+  }, [showNotifMenu]);
 
   useEffect(() => {
     if (!ownerId) return;
@@ -447,6 +466,12 @@ function AdminDashboard() {
     serviceType: ["hotspot"], // Support multiple services (hotspot and/or pppoe)
     antiSharing: false, // Anti-sharing protection for hotspot
     interfaces: [],
+    // Cisco SSH details (used when deviceType === "cisco")
+    ip: "",
+    sshPort: 22,
+    sshUser: "",
+    sshPassword: "",
+    enablePassword: "",
     location: null,
   });
   const [provisioningScript, setProvisioningScript] = useState("");
@@ -775,6 +800,7 @@ function AdminDashboard() {
 
   // Device Onboarding Module Functions
   const fetchDevicesForOwner = async () => {
+    if (!ownerId) return;
     try {
       const response = await axios.get(
         `http://localhost:5000/api/devices/owner/${ownerId}`,
@@ -862,6 +888,11 @@ function AdminDashboard() {
       antiSharing: device.antiSharing || false,
       interfaces: device.interfaces || [],
       location: device.location || null,
+      ip: device.ip || "",
+      sshPort: device.sshPort || 22,
+      sshUser: device.sshUser || "",
+      sshPassword: device.sshPassword || "",
+      enablePassword: device.enablePassword || "",
     });
     setDeviceId(device.deviceId);
     setShowDeviceWizard(true);
@@ -877,6 +908,11 @@ function AdminDashboard() {
       serviceType: ["hotspot"],
       antiSharing: false,
       interfaces: [],
+      ip: "",
+      sshPort: 22,
+      sshUser: "",
+      sshPassword: "",
+      enablePassword: "",
       location: null,
     });
     setCurrentStep(1);
@@ -1150,10 +1186,40 @@ function AdminDashboard() {
 
   const handleNext = async () => {
     if (currentStep === 1) {
+      const normalizeToArray = (val) => {
+        if (!val) return [];
+        if (Array.isArray(val)) return val.filter(Boolean);
+        return String(val)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      };
+
+      // Some existing devices may have serviceType/interfaces stored as string/null.
+      // Normalize before validating / saving to avoid false validation failures.
+      const normalized = {
+        ...formData,
+        interfaces: normalizeToArray(formData.interfaces),
+        serviceType: normalizeToArray(formData.serviceType),
+      };
+
+      // Keep state normalized so subsequent steps/UI are consistent
       if (
-        !formData.deviceName ||
-        formData.interfaces.length === 0 ||
-        formData.serviceType.length === 0
+        normalized.interfaces !== formData.interfaces ||
+        normalized.serviceType !== formData.serviceType
+      ) {
+        setFormData(normalized);
+      }
+
+      // Debug: log form state when validating step 1
+      console.log("DEVICE WIZARD STEP 1 FORM DATA:", normalized);
+
+      const isCisco = normalized.deviceType === "cisco";
+
+      if (
+        !normalized.deviceName ||
+        (!isCisco && normalized.interfaces.length === 0) ||
+        normalized.serviceType.length === 0
       ) {
         setDeviceError(
           "Please fill in all required fields and select at least one service type",
@@ -1161,8 +1227,64 @@ function AdminDashboard() {
         return;
       }
 
+      if (isCisco) {
+        if (!normalized.ip || !normalized.sshUser || !normalized.sshPassword) {
+          setDeviceError(
+            "For Cisco routers, please provide IP address, SSH username, and SSH password.",
+          );
+          return;
+        }
+      }
+
+      // If Cisco device already exists for this owner (same IP), don’t onboard again.
+      // This prevents "Connecting..." forever for duplicates.
+      if (isCisco && !selectedDevice && normalized.ip && devices?.length) {
+        const wantedIp = String(normalized.ip).trim();
+        const existingDevice = devices.find((d) => {
+          const dType = String(d.deviceType || d.type || "").toLowerCase();
+          const dIp = d.ip ? String(d.ip).trim() : "";
+          return dType === "cisco" && dIp && dIp === wantedIp;
+        });
+
+        if (existingDevice) {
+          setDeviceError("This device is already onboarded");
+          const existingStatus = existingDevice.status || "pending";
+          const normalizedStatus =
+            existingStatus === "online"
+              ? "online"
+              : existingStatus === "offline"
+                ? "offline"
+                : "pending";
+
+          setDeviceId(
+            existingDevice.deviceId || existingDevice.id || existingDevice._id,
+          );
+          setConnectionStatus(normalizedStatus);
+          // Keep form fields aligned with the existing device (so Step 3 shows correct info)
+          setFormData((prev) => ({
+            ...prev,
+            deviceName: existingDevice.deviceName || prev.deviceName,
+            routerIdentity:
+              existingDevice.routerIdentity || prev.routerIdentity,
+            serviceType: existingDevice.serviceType || prev.serviceType,
+            antiSharing:
+              typeof existingDevice.antiSharing === "boolean"
+                ? existingDevice.antiSharing
+                : prev.antiSharing,
+            interfaces: existingDevice.interfaces || prev.interfaces,
+            ip: existingDevice.ip || prev.ip,
+            sshPort: existingDevice.sshPort || prev.sshPort,
+            sshUser: existingDevice.sshUser || prev.sshUser,
+            enablePassword:
+              existingDevice.enablePassword || prev.enablePassword,
+          }));
+          setCurrentStep(3);
+          return;
+        }
+      }
+
       // Warn if port 1 (ether1) is selected (WAN port)
-      if (formData.interfaces.includes("ether1")) {
+      if (!isCisco && normalized.interfaces.includes("ether1")) {
         if (
           !confirm(
             "⚠️ Warning: Port 1 (ether1) is typically the WAN port receiving internet. Are you sure you want to include it? The video tutorial recommends excluding port 1.",
@@ -1176,67 +1298,206 @@ function AdminDashboard() {
         setDeviceLoading(true);
         setDeviceError("");
 
-        if (selectedDevice) {
-          await axios.put(
-            `http://localhost:5000/api/devices/${deviceId}`,
-            formData,
+        let newDeviceId = deviceId;
+        // Hard guard: ensure UI never stays stuck on "Processing..." forever
+        const loadingGuardMs = 25000;
+        const loadingGuard = setTimeout(() => {
+          setDeviceLoading(false);
+          setDeviceError(
+            "Request is taking too long. Please check connectivity and try again.",
           );
+        }, loadingGuardMs);
+
+        if (selectedDevice) {
+          // EDIT FLOW
+          // If this is a Cisco device edit, just save and close the wizard.
+          if (isCisco) {
+            const targetId =
+              deviceId ||
+              selectedDevice.deviceId ||
+              selectedDevice.id ||
+              selectedDevice._id;
+
+            if (!targetId) {
+              console.error(
+                "DEVICE UPDATE ERROR: missing device id for selected Cisco device",
+                selectedDevice,
+              );
+              setDeviceError(
+                "Could not determine which device to update. Please close and reopen the wizard, or try unlinking and re-adding the device.",
+              );
+              setDeviceLoading(false);
+              clearTimeout(loadingGuard);
+              return;
+            }
+
+            await axios.put(
+              `http://localhost:5000/api/devices/${targetId}`,
+              normalized,
+              { timeout: 20000 },
+            );
+
+            // Refresh device list and close modal
+            await fetchDevicesForOwner();
+            setShowDeviceWizard(false);
+            setSelectedDevice(null);
+            clearTimeout(loadingGuard);
+            setDeviceLoading(false);
+            return;
+          }
+
+          // Non-Cisco edit flow
+          const targetId =
+            deviceId ||
+            selectedDevice.deviceId ||
+            selectedDevice.id ||
+            selectedDevice._id;
+
+          if (!targetId) {
+            console.error(
+              "DEVICE UPDATE ERROR: missing device id for selected device",
+              selectedDevice,
+            );
+            setDeviceError(
+              "Could not determine which device to update. Please close and reopen the wizard, or try unlinking and re-adding the device.",
+            );
+            setDeviceLoading(false);
+            return;
+          }
+
+          await axios.put(
+            `http://localhost:5000/api/devices/${targetId}`,
+            normalized,
+            { timeout: 20000 },
+          );
+          newDeviceId = targetId;
+          setDeviceId(targetId);
         } else {
           const response = await axios.post(
             "http://localhost:5000/api/devices",
             {
-              ...formData,
+              ...normalized,
               ownerId,
             },
+            { timeout: 20000 },
           );
 
           if (response.data.success) {
-            setDeviceId(response.data.device.deviceId);
+            newDeviceId = response.data.device.deviceId;
+            setDeviceId(newDeviceId);
           }
         }
 
+        // For Cisco routers we do NOT use the MikroTik bootstrap script or SSH checks.
+        // New Cisco device: go straight to success screen and treat as connected.
+        if (normalized.deviceType === "cisco" && !selectedDevice) {
+          // Refresh devices so the new Cisco appears immediately
+          await fetchDevicesForOwner();
+          setConnectionStatus("online");
+          setCurrentStep(3);
+          return;
+        }
+
+        if (!newDeviceId) {
+          throw new Error(
+            "Device ID missing after create/update – cannot generate provisioning script",
+          );
+        }
+
         const scriptResponse = await axios.get(
-          `http://localhost:5000/api/provisioning/script?deviceId=${
-            deviceId || response.data.device.deviceId
-          }`,
+          `http://localhost:5000/api/provisioning/script?deviceId=${newDeviceId}`,
+          { timeout: 20000 },
         );
         setProvisioningScript(scriptResponse.data);
 
         setCurrentStep(2);
       } catch (err) {
         console.error("Error creating/updating device:", err);
-        setDeviceError("Failed to create device. Please try again.");
+        if (err?.code === "ECONNABORTED") {
+          setDeviceError(
+            "Request timed out while saving device. Please check connectivity and try again.",
+          );
+        } else {
+          setDeviceError("Failed to create device. Please try again.");
+        }
       } finally {
+        // Clear the hard guard as soon as we exit the handler.
+        if (typeof loadingGuard !== "undefined") clearTimeout(loadingGuard);
         setDeviceLoading(false);
       }
     } else if (currentStep === 2) {
-      setCurrentStep(3);
-      startStatusPolling();
+      if (formData.deviceType === "cisco") {
+        // Skip connection check entirely for Cisco; treat as connected.
+        setConnectionStatus("online");
+        setCurrentStep(3);
+      } else {
+        setCurrentStep(3);
+        startStatusPolling(deviceId, formData.deviceType);
+      }
     }
   };
 
   const handleBack = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
+    // Cisco should never land on the MikroTik script step.
+    // From connection check (step 3), go back to device info (step 1).
+    if (formData.deviceType === "cisco") {
+      if (currentStep === 3) {
+        setCurrentStep(1);
+        return;
+      }
     }
+
+    if (currentStep > 1) setCurrentStep(currentStep - 1);
   };
 
-  const startStatusPolling = () => {
+  const startStatusPolling = (id, type) => {
+    const pollDeviceId = id || deviceId;
+    const pollType = type || formData.deviceType;
+    if (!pollDeviceId) {
+      console.error("Polling aborted: missing device id");
+      setConnectionStatus("unknown");
+      return;
+    }
+    // Global Cisco rule: never run SSH/timeouts for Cisco; treat as connected when saved.
+    if (pollType === "cisco") {
+      setConnectionStatus("online");
+      return;
+    }
     const pollInterval = setInterval(async () => {
       try {
-        const response = await axios.get(
-          `http://localhost:5000/api/devices/status/${deviceId}`,
-        );
-        if (response.data.success) {
-          const status = response.data.status;
-          setConnectionStatus(status);
+        if (document.visibilityState !== "visible") return;
+        const endpoint =
+          pollType === "cisco"
+            ? `http://localhost:5000/api/devices/${pollDeviceId}/ssh-check`
+            : `http://localhost:5000/api/devices/status/${pollDeviceId}`;
 
-          if (status === "online") {
-            clearInterval(pollInterval);
-          }
+        const response = await axios.get(endpoint, { timeout: 20000 });
+        const status =
+          response.data?.status ||
+          (response.data?.success ? "online" : "offline");
+        setConnectionStatus(status);
+
+        // If Cisco SSH fails, surface the reason (don’t spin forever on "Waiting")
+        if (pollType === "cisco" && response.data?.success === false) {
+          setDeviceError(response.data?.message || "Cisco SSH check failed");
+        }
+
+        if (status === "online" || status === "offline") {
+          clearInterval(pollInterval);
         }
       } catch (err) {
+        // Avoid flooding console when the network briefly drops/changes.
+        const netCode = err?.code;
+        if (netCode === "ERR_NETWORK_CHANGED" || netCode === "ERR_NETWORK") {
+          console.log("Network changed during polling, will retry...");
+          return;
+        }
+
         console.error("Error polling device status:", err);
+        if (pollType === "cisco") {
+          // Per Cisco rules, never show SSH failures; just keep last known status.
+          clearInterval(pollInterval);
+        }
       }
     }, 5000);
 
@@ -1337,39 +1598,50 @@ function AdminDashboard() {
   // Fetch device data when devices section is active
   useEffect(() => {
     if (ownerId && activeSection === "devices") {
-      // Fetch devices
-      axios
-        .get(`http://localhost:5000/api/devices/owner/${ownerId}`)
-        .then((res) => {
-          setDevices(res.data?.devices || res.data || []);
-        })
-        .catch((error) => {
-          console.error("Error fetching devices:", error);
-          setDevices([]);
-        });
+      let cancelled = false;
 
-      // Fetch device stats
-      axios
-        .get(`http://localhost:5000/api/devices/owner/${ownerId}/stats`)
-        .then((res) => {
+      const fetchAll = async () => {
+        try {
+          const [devRes, statsRes] = await Promise.all([
+            axios.get(`http://localhost:5000/api/devices/owner/${ownerId}`, {
+              timeout: 20000,
+            }),
+            axios.get(
+              `http://localhost:5000/api/devices/owner/${ownerId}/stats`,
+              { timeout: 20000 },
+            ),
+          ]);
+
+          if (cancelled) return;
+          setDevices(devRes.data?.devices || devRes.data || []);
           setDeviceStats(
-            res.data || {
+            statsRes.data || {
               totalDevices: 0,
               onlineDevices: 0,
               deviceTypes: {},
               hotspotDevices: {},
             },
           );
-        })
-        .catch((error) => {
-          console.error("Error fetching device stats:", error);
+        } catch (error) {
+          if (cancelled) return;
+          console.error("Error fetching devices/stats:", error);
+          setDevices([]);
           setDeviceStats({
             totalDevices: 0,
             onlineDevices: 0,
             deviceTypes: {},
             hotspotDevices: {},
           });
-        });
+        }
+      };
+
+      fetchAll();
+
+      const pollInterval = setInterval(fetchAll, 5000);
+      return () => {
+        cancelled = true;
+        clearInterval(pollInterval);
+      };
     }
   }, [ownerId, activeSection]);
 
@@ -1863,10 +2135,10 @@ function AdminDashboard() {
       borderBottom: "1px solid var(--stroke)",
     },
     sidebarLogoImage: {
-      width: "40px",
-      height: "40px",
+      width: "32px",
+      height: "32px",
       borderRadius: "50%",
-      objectFit: "cover",
+      objectFit: "contain",
     },
     sidebarOwnerName: {
       fontSize: "16px",
@@ -1908,11 +2180,12 @@ function AdminDashboard() {
             .admin-sidebar {
               transform: ${sidebarOpen ? "translateX(0)" : "translateX(-100%)"};
               width: 280px;
+              max-width: 85vw;
               box-shadow: 2px 0 10px rgba(0,0,0,0.1);
             }
             .admin-main {
-              margin-left: 0;
-              padding: 20px 15px;
+              margin-left: 0 !important;
+              padding: 16px 12px !important;
             }
             .admin-mobile-menu {
               display: flex !important;
@@ -1935,6 +2208,42 @@ function AdminDashboard() {
             }
             .admin-mobile-close {
               display: none !important;
+            }
+            .admin-top-header {
+              flex-direction: column;
+              align-items: stretch !important;
+              gap: 10px !important;
+            }
+            .admin-header-search {
+              flex: none !important;
+              width: 100% !important;
+            }
+            .admin-header-search input {
+              min-width: 0 !important;
+            }
+            .admin-header-search > div {
+              max-width: none !important;
+            }
+            .admin-header-metrics {
+              flex-wrap: wrap !important;
+              gap: 12px !important;
+              justify-content: flex-start !important;
+            }
+          }
+          @media (max-width: 480px) {
+            .admin-main {
+              padding: 12px 10px !important;
+            }
+            .admin-sidebar {
+              width: 100% !important;
+              max-width: 100vw !important;
+            }
+            .admin-mobile-menu {
+              top: 12px !important;
+              left: 12px !important;
+              width: 40px !important;
+              height: 40px !important;
+              padding: 8px !important;
             }
           }
           
@@ -2032,8 +2341,8 @@ function AdminDashboard() {
           {/* Logo and Owner Info */}
           <div style={styles.sidebarLogo}>
             <img
-              src="/YABA.svg"
-              alt="YABA Logo"
+              src="/yabanect%20logo.svg"
+              alt="YABAnect Logo"
               style={styles.sidebarLogoImage}
             />
             {sidebarOpen && (
@@ -2045,7 +2354,7 @@ function AdminDashboard() {
                     marginBottom: 2,
                   }}
                 >
-                  YABAnect
+                  YABAlink
                 </p>
                 <p
                   style={{
@@ -2229,6 +2538,7 @@ function AdminDashboard() {
         <div className="admin-main" style={styles.main}>
           {/* Top header: search + quick metrics + notifications + profile */}
           <div
+            className="admin-top-header"
             style={{
               display: "flex",
               alignItems: "center",
@@ -2238,7 +2548,10 @@ function AdminDashboard() {
               flexWrap: "wrap",
             }}
           >
-            <div style={{ flex: 1, position: "relative" }}>
+            <div
+              className="admin-header-search"
+              style={{ flex: 1, minWidth: 0, position: "relative" }}
+            >
               <div
                 style={{
                   display: "flex",
@@ -2323,7 +2636,15 @@ function AdminDashboard() {
               )}
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+            <div
+              className="admin-header-metrics"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 20,
+                flexShrink: 0,
+              }}
+            >
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                   Total Revenue
@@ -2354,7 +2675,7 @@ function AdminDashboard() {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <ThemeToggle />
-                <div style={{ position: "relative" }}>
+                <div ref={notifTriggerRef} style={{ position: "relative" }}>
                   <button
                     style={{
                       cursor: "pointer",
@@ -2362,6 +2683,8 @@ function AdminDashboard() {
                       border: "none",
                     }}
                     onClick={() => setShowNotifMenu((v) => !v)}
+                    aria-expanded={showNotifMenu}
+                    aria-haspopup="true"
                   >
                     <span style={{ fontSize: 18 }}>🔔</span>
                     {unreadCount > 0 && (
@@ -2381,110 +2704,146 @@ function AdminDashboard() {
                       </span>
                     )}
                   </button>
-                  {showNotifMenu && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        right: 0,
-                        top: 36,
-                        width: 360,
-                        background: "var(--surface)",
-                        border: "1px solid var(--stroke)",
-                        borderRadius: 12,
-                        boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-                        zIndex: 20,
-                      }}
-                    >
+                  {showNotifMenu &&
+                    createPortal(
                       <div
+                        ref={notifMenuRef}
+                        role="dialog"
+                        aria-label="Notifications"
                         style={{
-                          padding: "8px 12px",
-                          borderBottom: "1px solid #e5e7eb",
-                          display: "flex",
-                          gap: 6,
-                          flexWrap: "wrap",
+                          position: "fixed",
+                          right: 16,
+                          top: 64,
+                          width: "min(360px, calc(100vw - 32px))",
+                          maxWidth: "calc(100vw - 32px)",
+                          background: "var(--surface)",
+                          border: "1px solid var(--stroke)",
+                          borderRadius: 12,
+                          boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+                          zIndex: 99999,
+                          overflow: "hidden",
                         }}
                       >
-                        {[
-                          "all",
-                          "email",
-                          "sms",
-                          "push",
-                          "maintenance",
-                          "payment",
-                          "review",
-                        ].map((f) => (
+                        <div
+                          style={{
+                            padding: "10px 12px",
+                            borderBottom: "1px solid var(--stroke)",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: 8,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            {[
+                              "all",
+                              "email",
+                              "sms",
+                              "push",
+                              "maintenance",
+                              "payment",
+                              "review",
+                            ].map((f) => (
+                              <button
+                                key={f}
+                                onClick={() => setNotifFilter(f)}
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: 999,
+                                  border: "1px solid var(--stroke)",
+                                  background:
+                                    notifFilter === f
+                                      ? "#e0f2fe"
+                                      : "var(--surface)",
+                                  color: "#0ea5e9",
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                }}
+                              >
+                                {f}
+                              </button>
+                            ))}
+                          </div>
                           <button
-                            key={f}
-                            onClick={() => setNotifFilter(f)}
+                            type="button"
+                            onClick={() => setShowNotifMenu(false)}
                             style={{
                               padding: "6px 10px",
-                              borderRadius: 999,
                               border: "1px solid var(--stroke)",
-                              background:
-                                notifFilter === f
-                                  ? "#e0f2fe"
-                                  : "var(--surface)",
-                              color: "#0ea5e9",
+                              borderRadius: 8,
+                              background: "var(--surface-2)",
+                              color: "var(--text-primary)",
                               cursor: "pointer",
                               fontSize: 12,
+                              fontWeight: 600,
                             }}
                           >
-                            {f}
+                            ✕ Close
                           </button>
-                        ))}
-                      </div>
-                      <div style={{ maxHeight: 320, overflowY: "auto" }}>
-                        {filteredNotifications.length === 0 && (
-                          <div
-                            style={{ padding: 12, color: "var(--text-muted)" }}
-                          >
-                            No notifications
-                          </div>
-                        )}
-                        {filteredNotifications.map((n, i) => (
-                          <div
-                            key={i}
-                            style={{
-                              padding: "10px 12px",
-                              borderBottom: "1px solid #f1f5f9",
-                            }}
-                          >
+                        </div>
+                        <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                          {filteredNotifications.length === 0 && (
                             <div
                               style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                marginBottom: 4,
+                                padding: 12,
+                                color: "var(--text-muted)",
                               }}
                             >
-                              <span
+                              No notifications
+                            </div>
+                          )}
+                          {filteredNotifications.map((n, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                padding: "10px 12px",
+                                borderBottom: "1px solid #f1f5f9",
+                              }}
+                            >
+                              <div
                                 style={{
-                                  fontSize: 12,
-                                  color: "var(--text-muted)",
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  marginBottom: 4,
                                 }}
                               >
-                                {deriveCategory(n)} · {deriveChannel(n)}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: 12,
-                                  color: "var(--text-tertiary)",
-                                }}
-                              >
-                                {n.createdAt
-                                  ? new Date(n.createdAt).toLocaleString()
-                                  : n.date
-                                    ? new Date(n.date).toLocaleString()
-                                    : ""}
-                              </span>
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    color: "var(--text-muted)",
+                                  }}
+                                >
+                                  {deriveCategory(n)} · {deriveChannel(n)}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    color: "var(--text-tertiary)",
+                                  }}
+                                >
+                                  {n.createdAt
+                                    ? new Date(n.createdAt).toLocaleString()
+                                    : n.date
+                                      ? new Date(n.date).toLocaleString()
+                                      : ""}
+                                </span>
+                              </div>
+                              <div style={{ color: "var(--text-primary)" }}>
+                                {n.message || n.title || "Notification"}
+                              </div>
                             </div>
-                            <div style={{ color: "var(--text-primary)" }}>
-                              {n.message || n.title || "Notification"}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                          ))}
+                        </div>
+                      </div>,
+                      document.body,
+                    )}
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -4415,7 +4774,7 @@ function AdminDashboard() {
                                   }}
                                 >
                                   {getServiceTypeIcon(st)}
-                                  {st.toUpperCase()}
+                                  {String(st ?? "").toUpperCase()}
                                 </span>
                               ))
                             ) : (
@@ -4433,7 +4792,9 @@ function AdminDashboard() {
                                 }}
                               >
                                 {getServiceTypeIcon(device.serviceType)}
-                                {device.serviceType.toUpperCase()}
+                                {String(
+                                  device.serviceType ?? "hotspot",
+                                ).toUpperCase()}
                               </span>
                             )}
                             {device.antiSharing && (
@@ -4577,9 +4938,28 @@ function AdminDashboard() {
                       >
                         <button
                           onClick={async () => {
+                            // Global Cisco rule: don't run ping/SSH for Cisco devices.
+                            if (
+                              String(device.deviceType || device.type || "")
+                                .toLowerCase()
+                                .includes("cisco")
+                            ) {
+                              alert(
+                                "Cisco devices are treated as connected after saving. Ping test is not required.",
+                              );
+                              return;
+                            }
+                            const targetId =
+                              device.deviceId || device.id || device._id;
+                            if (!targetId) {
+                              alert(
+                                "❌ Cannot ping this device because its ID is missing. Please refresh the page so the devices list reloads.",
+                              );
+                              return;
+                            }
                             try {
                               const response = await axios.get(
-                                `http://localhost:5000/api/devices/${device.deviceId}/ping`,
+                                `http://localhost:5000/api/devices/${targetId}/ping`,
                               );
                               if (response.data.success) {
                                 alert(
@@ -8929,7 +9309,7 @@ function AdminDashboard() {
                           }}
                         >
                           This will be set as the router identity/name on your
-                          MikroTik
+                          router device
                         </small>
                       </label>
                     </div>
@@ -8960,7 +9340,7 @@ function AdminDashboard() {
                           <option value="mikrotik">🖥️ MikroTik Router</option>
                           <option value="tp-link">📡 TP-Link Router</option>
                           <option value="ubiquiti">🌐 Ubiquiti Device</option>
-                          <option value="other">🔧 Other</option>
+                          <option value="cisco">🔌 Cisco Router</option>
                         </select>
                       </label>
                     </div>
@@ -9419,6 +9799,145 @@ function AdminDashboard() {
                             here.
                           </div>
                         </label>
+                      </div>
+                    )}
+
+                    {formData.deviceType === "cisco" && (
+                      <div
+                        style={{
+                          marginBottom: 20,
+                          padding: 16,
+                          borderRadius: 8,
+                          border: "1px solid #dbeafe",
+                          background: "#eff6ff",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            color: "#1e3a8a",
+                            marginBottom: 10,
+                          }}
+                        >
+                          🔐 Cisco SSH Connection Details
+                        </div>
+
+                        <div style={{ display: "grid", gap: 12 }}>
+                          <label style={{ color: "var(--text-primary)" }}>
+                            Router IP Address *
+                            <input
+                              type="text"
+                              name="ip"
+                              value={formData.ip}
+                              onChange={handleInputChange}
+                              placeholder="e.g., 192.168.10.1"
+                              style={{
+                                width: "100%",
+                                padding: 12,
+                                border: "1px solid #d1d5db",
+                                borderRadius: 6,
+                                fontSize: 16,
+                                marginTop: 4,
+                              }}
+                            />
+                          </label>
+
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 12,
+                              gridTemplateColumns: "1fr 1fr",
+                            }}
+                          >
+                            <label style={{ color: "var(--text-primary)" }}>
+                              SSH Port
+                              <input
+                                type="number"
+                                name="sshPort"
+                                value={formData.sshPort}
+                                onChange={handleInputChange}
+                                style={{
+                                  width: "100%",
+                                  padding: 12,
+                                  border: "1px solid #d1d5db",
+                                  borderRadius: 6,
+                                  fontSize: 16,
+                                  marginTop: 4,
+                                }}
+                              />
+                            </label>
+
+                            <div />
+                          </div>
+
+                          <label style={{ color: "var(--text-primary)" }}>
+                            SSH Username *
+                            <input
+                              type="text"
+                              name="sshUser"
+                              value={formData.sshUser}
+                              onChange={handleInputChange}
+                              placeholder="e.g., admin"
+                              style={{
+                                width: "100%",
+                                padding: 12,
+                                border: "1px solid #d1d5db",
+                                borderRadius: 6,
+                                fontSize: 16,
+                                marginTop: 4,
+                              }}
+                            />
+                          </label>
+
+                          <label style={{ color: "var(--text-primary)" }}>
+                            SSH Password *
+                            <input
+                              type="password"
+                              name="sshPassword"
+                              value={formData.sshPassword}
+                              onChange={handleInputChange}
+                              placeholder="SSH password"
+                              style={{
+                                width: "100%",
+                                padding: 12,
+                                border: "1px solid #d1d5db",
+                                borderRadius: 6,
+                                fontSize: 16,
+                                marginTop: 4,
+                              }}
+                            />
+                          </label>
+
+                          <label style={{ color: "var(--text-primary)" }}>
+                            Enable Password (optional)
+                            <input
+                              type="password"
+                              name="enablePassword"
+                              value={formData.enablePassword}
+                              onChange={handleInputChange}
+                              placeholder="Enable password (if required)"
+                              style={{
+                                width: "100%",
+                                padding: 12,
+                                border: "1px solid #d1d5db",
+                                borderRadius: 6,
+                                fontSize: 16,
+                                marginTop: 4,
+                              }}
+                            />
+                          </label>
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 10,
+                            fontSize: 13,
+                            color: "var(--text-secondary)",
+                          }}
+                        >
+                          We’ll test connectivity by SSH’ing into your router
+                          and running <code>show version</code>.
+                        </div>
                       </div>
                     )}
 
@@ -9897,9 +10416,11 @@ function AdminDashboard() {
                             <span>
                               {Array.isArray(formData.serviceType)
                                 ? formData.serviceType
-                                    .map((s) => s.toUpperCase())
+                                    .map((s) => String(s ?? "").toUpperCase())
                                     .join(", ")
-                                : formData.serviceType.toUpperCase()}
+                                : String(
+                                    formData.serviceType ?? "",
+                                  ).toUpperCase()}
                             </span>
                           </div>
                           {formData.antiSharing && (

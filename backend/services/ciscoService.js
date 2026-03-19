@@ -25,6 +25,8 @@ function runCiscoCommands(device, commands) {
     const conn = new Client();
     let rawOutput = "";
 
+    console.log("Attempting SSH to:", device.ip, "port:", device.sshPort || 22);
+
     conn
       .on("ready", () => {
         const cmdList = Array.isArray(commands) ? commands : [commands];
@@ -70,11 +72,17 @@ function runCiscoCommands(device, commands) {
         });
       })
       .connect({
-        host: ip,
-        port: sshPort,
-        username: sshUser,
-        password: sshPassword,
-        readyTimeout: 15000,
+        host: device.ip,
+        port: device.sshPort || 22,
+        username: device.sshUser,
+        password: device.sshPassword,
+        readyTimeout: 30000,
+        algorithms: {
+          kex: ["diffie-hellman-group1-sha1"],
+          cipher: ["aes128-cbc"],
+          hmac: ["hmac-sha1"],
+          serverHostKey: ["ssh-rsa"],
+        },
       });
   });
 }
@@ -344,8 +352,37 @@ async function getConnectedUsers(device) {
   }
 }
 
+async function checkCiscoConnection(device) {
+  try {
+    const result = await runCiscoCommands(device, ["show version"]);
+    if (!result.success) {
+      return {
+        success: false,
+        message: result.message,
+        rawOutput: result.rawOutput,
+      };
+    }
+
+    const { model, version } = parseVersionInfo(result.rawOutput);
+    return {
+      success: true,
+      message: "Cisco router reachable via SSH",
+      rawOutput: result.rawOutput,
+      model,
+      version,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      message: err.message || "Failed to check Cisco connection",
+      rawOutput: "",
+    };
+  }
+}
+
 module.exports = {
   onboardCiscoDevice,
+  checkCiscoConnection,
   createVoucherUser,
   deleteVoucherUser,
   updateUserBandwidth,

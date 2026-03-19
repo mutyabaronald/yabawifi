@@ -72,10 +72,12 @@ router.post("/onboard", async (req, res) => {
       rawOutput: onboardResult.rawOutput,
     });
   } catch (err) {
-    console.error("Cisco /onboard error:", err);
+    console.error("CISCO ONBOARD FAILED:", err.message);
+    console.error("FULL ERROR:", err.stack);
     return res.status(500).json({
       success: false,
-      message: err.message || "Failed to onboard Cisco device",
+      message: err.message,
+      stack: err.stack,
     });
   }
 });

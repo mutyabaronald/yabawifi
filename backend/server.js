@@ -68,6 +68,71 @@ app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   next();
 });
+
+// Cisco SSH check endpoint (defined early to guarantee routing)
+app.get("/api/devices/:id/ssh-check", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { db, admin } = require("./firebase");
+    const { checkCiscoConnection } = require("./services/ciscoService");
+
+    const snap = await db.collection("devices").doc(String(id)).get();
+    if (!snap.exists) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Device not found" });
+    }
+    const device = snap.data();
+    if ((device.deviceType || "").toLowerCase() !== "cisco") {
+      return res.status(400).json({
+        success: false,
+        message: "SSH check is only available for Cisco devices",
+      });
+    }
+
+    const lastCheckedMs = device.lastCheckedAtISO
+      ? Date.parse(device.lastCheckedAtISO)
+      : 0;
+    const fresh = lastCheckedMs && Date.now() - lastCheckedMs < 60_000;
+    if (device.status === "online" && fresh) {
+      return res.json({
+        success: true,
+        status: "online",
+        message: "Cisco router already marked online",
+        model: device.routerModel || null,
+        version: device.routerVersion || null,
+      });
+    }
+
+    const result = await checkCiscoConnection(device);
+
+    await db
+      .collection("devices")
+      .doc(String(id))
+      .update({
+        status: result.success ? "online" : "offline",
+        routerModel: result.model || null,
+        routerVersion: result.version || null,
+        lastCheckedAtISO: new Date().toISOString(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    return res.json({
+      success: result.success,
+      status: result.success ? "online" : "offline",
+      message: result.message,
+      model: result.model || null,
+      version: result.version || null,
+    });
+  } catch (err) {
+    console.error("Cisco ssh-check error (early route):", err);
+    return res.status(500).json({
+      success: false,
+      status: "offline",
+      message: err?.message || "Failed to SSH check Cisco device",
+    });
+  }
+});
 app.use("/api/admin", adminRoutes);
 app.use("/api/statistics", statisticsRoutes);
 
@@ -116,6 +181,21 @@ app.use("/api/vouchers", vouchersRoutes);
 app.use("/api/routers", routerRoutes);
 app.use("/api", mtnRoutes);
 app.use("/api/hotspots", hotspotsRoutes);
+
+// Compatibility: some clients call /api/hotspots (no trailing slash)
+// Express router mount should already handle this, but keep an explicit handler
+// to avoid "Cannot GET /api/hotspots" in some setups.
+app.get("/api/hotspots", async (req, res) => {
+  try {
+    const { db } = require("./firebase");
+    const snap = await db.collection("hotspots").limit(200).get();
+    const hotspots = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    res.json({ success: true, hotspots });
+  } catch (err) {
+    console.error("Hotspots list error:", err?.message || err);
+    res.status(500).json({ success: false, hotspots: [] });
+  }
+});
 app.use("/api/loyalty", loyaltyRoutes);
 app.use("/api/owner/loyalty", ownerLoyaltyRoutes);
 app.use("/api/reviews", reviewsRoutes);
@@ -130,6 +210,74 @@ app.use("/api/referrals", referralsRoutes);
 app.use("/api/devices/cisco", ciscoRoutes);
 app.use("/", devicesRoutes);
 app.use("/api/devices", deviceTrackingRoutes);
+
+// Cisco SSH check endpoint (compatibility/safety)
+// Some deployments were not registering the router-based ssh-check route as expected.
+// Keep this here to guarantee the endpoint exists.
+app.get("/api/devices/:id/ssh-check", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { db, admin } = require("./firebase");
+    const { checkCiscoConnection } = require("./services/ciscoService");
+
+    const snap = await db.collection("devices").doc(String(id)).get();
+    if (!snap.exists) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Device not found" });
+    }
+    const device = snap.data();
+    if ((device.deviceType || "").toLowerCase() !== "cisco") {
+      return res.status(400).json({
+        success: false,
+        message: "SSH check is only available for Cisco devices",
+      });
+    }
+
+    // If already online and checked recently, don’t re-SSH.
+    const lastCheckedMs = device.lastCheckedAtISO
+      ? Date.parse(device.lastCheckedAtISO)
+      : 0;
+    const fresh = lastCheckedMs && Date.now() - lastCheckedMs < 60_000; // 60s
+    if (device.status === "online" && fresh) {
+      return res.json({
+        success: true,
+        status: "online",
+        message: "Cisco router already marked online",
+        model: device.routerModel || null,
+        version: device.routerVersion || null,
+      });
+    }
+
+    const result = await checkCiscoConnection(device);
+
+    await db
+      .collection("devices")
+      .doc(String(id))
+      .update({
+        status: result.success ? "online" : "offline",
+        routerModel: result.model || null,
+        routerVersion: result.version || null,
+        lastCheckedAtISO: new Date().toISOString(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    return res.json({
+      success: result.success,
+      status: result.success ? "online" : "offline",
+      message: result.message,
+      model: result.model || null,
+      version: result.version || null,
+    });
+  } catch (err) {
+    console.error("Cisco ssh-check error (server.js):", err);
+    return res.status(500).json({
+      success: false,
+      status: "offline",
+      message: err?.message || "Failed to SSH check Cisco device",
+    });
+  }
+});
 
 // Serve static files from frontend directory (after all API routes)
 app.use(express.static(path.join(__dirname, "../frontend")));

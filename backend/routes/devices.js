@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require("uuid");
 
 // 🔥 Firebase Admin (using existing structure)
 const { admin, db } = require("../firebase");
+const { checkCiscoConnection } = require("../services/ciscoService");
 
 // ✅ ENV VARS (set these in .env)
 const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL || "http://localhost:5000"; // public URL reachable by routers
@@ -43,10 +44,7 @@ async function appendDeviceLog(deviceId, entry) {
       .collection("logs")
       .add(log);
   } catch (err) {
-    console.warn(
-      "[devices] Failed to append device log:",
-      err?.message || err
-    );
+    console.warn("[devices] Failed to append device log:", err?.message || err);
   }
 }
 
@@ -62,22 +60,30 @@ router.post("/api/devices", async (req, res) => {
       deviceType = "mikrotik", // default to mikrotik
       serviceType, // "hotspot" | "pppoe" | ["hotspot", "pppoe"] (array or single)
       antiSharing = false, // Anti-sharing protection for hotspot
-      interfaces,  // array of ports like ["ether2","ether3"]
+      interfaces, // array of ports like ["ether2","ether3"]
+      // Cisco SSH connection details (optional; used when deviceType === "cisco")
+      ip,
+      sshPort,
+      sshUser,
+      sshPassword,
+      enablePassword,
     } = req.body;
 
     if (!ownerId || !deviceName || !serviceType) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "ownerId, deviceName, and serviceType are required." 
+      return res.status(400).json({
+        success: false,
+        message: "ownerId, deviceName, and serviceType are required.",
       });
     }
 
     // Normalize serviceType to array
-    const serviceTypes = Array.isArray(serviceType) ? serviceType : [serviceType];
+    const serviceTypes = Array.isArray(serviceType)
+      ? serviceType
+      : [serviceType];
     if (serviceTypes.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "At least one service type must be selected." 
+      return res.status(400).json({
+        success: false,
+        message: "At least one service type must be selected.",
       });
     }
 
@@ -96,6 +102,11 @@ router.post("/api/devices", async (req, res) => {
       interfaces: iface,
       status: "pending",
       token,
+      ip: ip || null,
+      sshPort: sshPort ? Number(sshPort) : null,
+      sshUser: sshUser || null,
+      sshPassword: sshPassword || null,
+      enablePassword: enablePassword || null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -121,7 +132,72 @@ router.post("/api/devices", async (req, res) => {
     });
   } catch (err) {
     console.error("Create device error:", err);
-    res.status(500).json({ success: false, message: "Failed to create device." });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create device." });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Cisco active SSH connection check
+// ─────────────────────────────────────────────────────────────
+router.get("/api/devices/:id/ssh-check", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const snap = await db.collection("devices").doc(String(id)).get();
+    if (!snap.exists) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Device not found" });
+    }
+
+    const device = snap.data();
+    if ((device.deviceType || "").toLowerCase() !== "cisco") {
+      return res.status(400).json({
+        success: false,
+        message: "SSH check is only available for Cisco devices",
+      });
+    }
+
+    const result = await checkCiscoConnection(device);
+
+    await db
+      .collection("devices")
+      .doc(String(id))
+      .update({
+        status: result.success ? "online" : "offline",
+        routerModel: result.model || null,
+        routerVersion: result.version || null,
+        lastCheckedAtISO: new Date().toISOString(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    appendDeviceLog(String(id), {
+      type: "ssh_check",
+      level: result.success ? "info" : "warn",
+      message: result.success
+        ? "Cisco SSH check succeeded"
+        : `Cisco SSH check failed: ${result.message}`,
+      meta: {
+        model: result.model || null,
+        version: result.version || null,
+      },
+    });
+
+    return res.json({
+      success: result.success,
+      status: result.success ? "online" : "offline",
+      message: result.message,
+      model: result.model || null,
+      version: result.version || null,
+    });
+  } catch (err) {
+    console.error("Cisco ssh-check error:", err);
+    return res.status(500).json({
+      success: false,
+      status: "offline",
+      message: err?.message || "Failed to SSH check Cisco device",
+    });
   }
 });
 
@@ -178,9 +254,11 @@ router.get("/provisioning/bootstrap", async (req, res) => {
     if (device.token !== token) return res.status(403).send("Invalid token");
 
     // Enhanced bootstrap script matching video tutorial requirements
-    const serviceTypes = Array.isArray(device.serviceType) ? device.serviceType : [device.serviceType];
+    const serviceTypes = Array.isArray(device.serviceType)
+      ? device.serviceType
+      : [device.serviceType];
     const interfaces = device.interfaces || ["ether2"];
-    
+
     const scriptLines = [];
 
     appendDeviceLog(rId, {
@@ -198,7 +276,7 @@ router.get("/provisioning/bootstrap", async (req, res) => {
     if (device.routerIdentity) {
       scriptLines.push(
         `/system identity set name="${device.routerIdentity}"`,
-        `:put "Router identity set to: ${device.routerIdentity}"`
+        `:put "Router identity set to: ${device.routerIdentity}"`,
       );
     }
 
@@ -207,81 +285,75 @@ router.get("/provisioning/bootstrap", async (req, res) => {
     scriptLines.push(
       `/ip/service set api address=0.0.0.0/0 disabled=no`,
       `/user add name=yaba_api group=full password=${apiPassword} disabled=no`,
-      `:put "API user created: yaba_api"`
+      `:put "API user created: yaba_api"`,
     );
 
     // 2) Create bridge for all selected interfaces (as shown in video)
     scriptLines.push(
       `:put "Creating bridge for interfaces: ${interfaces.join(", ")}"`,
-      `/interface bridge add name=bridge_yaba protocol-mode=none`
+      `/interface bridge add name=bridge_yaba protocol-mode=none`,
     );
 
     // Add all interfaces to bridge (except ether1 if it's the WAN port)
-    interfaces.forEach(iface => {
+    interfaces.forEach((iface) => {
       scriptLines.push(
-        `/interface bridge port add bridge=bridge_yaba interface=${iface}`
+        `/interface bridge port add bridge=bridge_yaba interface=${iface}`,
       );
     });
 
     // 3) Configure services based on selected types
     if (serviceTypes.includes("hotspot")) {
-      scriptLines.push(
-        `:put "Configuring Hotspot service"`
-      );
+      scriptLines.push(`:put "Configuring Hotspot service"`);
 
       // Use bridge interface for hotspot
       scriptLines.push(
         `/ip address add address=10.10.10.1/24 interface=bridge_yaba comment="YABA Hotspot"`,
         `/ip pool add name=hs_pool ranges=10.10.10.2-10.10.10.254`,
         `/ip dhcp-server add name=hs_dhcp interface=bridge_yaba address-pool=hs_pool disabled=no`,
-        `/ip dhcp-server network add address=10.10.10.0/24 gateway=10.10.10.1 dns-server=8.8.8.8,1.1.1.1`
+        `/ip dhcp-server network add address=10.10.10.0/24 gateway=10.10.10.1 dns-server=8.8.8.8,1.1.1.1`,
       );
 
       // Hotspot profile
       scriptLines.push(
-        `/ip hotspot profile add name=hs_prof hotspot-address=10.10.10.1 dns-name=yaba.login local-address=10.10.10.1 html-directory=hotspot`
+        `/ip hotspot profile add name=hs_prof hotspot-address=10.10.10.1 dns-name=yaba.login local-address=10.10.10.1 html-directory=hotspot`,
       );
-      
+
       // Add anti-sharing if enabled
       if (device.antiSharing) {
         scriptLines.push(
           `/ip hotspot profile set hs_prof shared-users=1`,
-          `:put "Anti-sharing protection enabled"`
+          `:put "Anti-sharing protection enabled"`,
         );
       }
-      
+
       scriptLines.push(
-        `/ip hotspot add name=hs1 interface=bridge_yaba profile=hs_prof disabled=no`
+        `/ip hotspot add name=hs1 interface=bridge_yaba profile=hs_prof disabled=no`,
       );
 
       if (device.antiSharing) {
-        scriptLines.push(
-          `:put "Anti-sharing protection enabled"`
-        );
+        scriptLines.push(`:put "Anti-sharing protection enabled"`);
       }
     }
 
     if (serviceTypes.includes("pppoe")) {
-      scriptLines.push(
-        `:put "Configuring PPPoE service"`
-      );
+      scriptLines.push(`:put "Configuring PPPoE service"`);
 
       // PPPoE server configuration
       scriptLines.push(
         `/ip pool add name=pppoe_pool ranges=10.20.20.2-10.20.20.254`,
         `/ppp profile add name=pppoe_prof local-address=10.20.20.1 remote-address=pppoe_pool`,
-        `/interface pppoe-server server add service-name=yaba_pppoe interface=bridge_yaba disabled=no`
+        `/interface pppoe-server server add service-name=yaba_pppoe interface=bridge_yaba disabled=no`,
       );
     }
 
     // 2) Call back to your server → mark connected
     const callbackUrl = `${APP_PUBLIC_URL}/api/devices/connected?rId=${encodeURIComponent(
-      rId
+      rId,
     )}&secret=${encodeURIComponent(CALLBACK_SECRET)}&status=online`;
     scriptLines.push(
       `:delay 2`,
       `/tool fetch url="${callbackUrl}" keep-result=no`,
-      `:put "YABA bootstrap complete"`
+      `:put "YABA bootstrap complete"`,
     );
 
     const out = scriptLines.join("\n");
@@ -332,10 +404,11 @@ router.get("/api/devices/status/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const snap = await db.collection("devices").doc(id).get();
-    if (!snap.exists) return res.status(404).json({ 
-      success: false, 
-      message: "Device not found" 
-    });
+    if (!snap.exists)
+      return res.status(404).json({
+        success: false,
+        message: "Device not found",
+      });
 
     const d = snap.data();
     return res.json({
@@ -354,28 +427,72 @@ router.get("/api/devices/status/:id", async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.get("/api/devices/owner/:ownerId", async (req, res) => {
   try {
+    console.log("GET devices called for owner:", req.params.ownerId);
     const { ownerId } = req.params;
-    
-    const snapshot = await db.collection("devices")
-      .where("ownerId", "==", ownerId)
-      .orderBy("createdAt", "desc")
-      .get();
+
+    let snapshot;
+    try {
+      snapshot = await db
+        .collection("devices")
+        .where("ownerId", "==", ownerId)
+        .orderBy("createdAt", "desc")
+        .get();
+    } catch (err) {
+      // If missing index or orderBy constraint, fallback to non-ordered query and sort in memory.
+      // Also surface the real error so we can create the composite index when needed.
+      console.error("DEVICES OWNER QUERY ERROR:", err?.message);
+      console.error(err);
+
+      const isIndexError =
+        (typeof err?.code === "string" &&
+          err.code.toLowerCase() === "failed-precondition") ||
+        err?.code === 9 ||
+        (typeof err?.message === "string" &&
+          err.message.toLowerCase().includes("index"));
+
+      if (!isIndexError) throw err;
+
+      snapshot = await db
+        .collection("devices")
+        .where("ownerId", "==", ownerId)
+        .get();
+    }
 
     const devices = [];
-    snapshot.forEach(doc => {
+    snapshot.forEach((doc) => {
       devices.push({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
       });
+    });
+
+    // Best-effort sort: prefer ISO timestamps if present, else leave as-is
+    devices.sort((a, b) => {
+      const aT = a.createdAtISO
+        ? Date.parse(a.createdAtISO)
+        : a.updatedAtISO
+          ? Date.parse(a.updatedAtISO)
+          : 0;
+      const bT = b.createdAtISO
+        ? Date.parse(b.createdAtISO)
+        : b.updatedAtISO
+          ? Date.parse(b.updatedAtISO)
+          : 0;
+      return bT - aT;
     });
 
     return res.json({
       success: true,
-      devices
+      devices,
     });
   } catch (err) {
-    console.error("Get owner devices error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch devices" });
+    console.error("GET DEVICES OWNER ERROR:", err.message);
+    console.error("STACK:", err.stack);
+    console.error("REAL ERROR:", err.message, err.stack);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to fetch devices",
+    });
   }
 });
 
@@ -391,7 +508,7 @@ router.put("/api/devices/:id", async (req, res) => {
     delete updateData.deviceId;
     delete updateData.ownerId;
     delete updateData.createdAt;
-    
+
     updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
     await db.collection("devices").doc(id).update(updateData);
@@ -400,18 +517,20 @@ router.put("/api/devices/:id", async (req, res) => {
       message: "Device updated",
       meta: {
         updatedFields: Object.keys(updateData || {}).filter(
-          (k) => !["updatedAt"].includes(k)
+          (k) => !["updatedAt"].includes(k),
         ),
       },
     });
 
     return res.json({
       success: true,
-      message: "Device updated successfully"
+      message: "Device updated successfully",
     });
   } catch (err) {
     console.error("Update device error:", err);
-    res.status(500).json({ success: false, message: "Failed to update device" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update device" });
   }
 });
 
@@ -421,18 +540,23 @@ router.put("/api/devices/:id", async (req, res) => {
 router.delete("/api/devices/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Best-effort: log the unlink before deleting the doc
-    appendDeviceLog(id, { type: "device_unlinked", message: "Device unlinked" });
+    appendDeviceLog(id, {
+      type: "device_unlinked",
+      message: "Device unlinked",
+    });
     await db.collection("devices").doc(id).delete();
 
     return res.json({
       success: true,
-      message: "Device unlinked successfully"
+      message: "Device unlinked successfully",
     });
   } catch (err) {
     console.error("Delete device error:", err);
-    res.status(500).json({ success: false, message: "Failed to unlink device" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to unlink device" });
   }
 });
 
@@ -443,21 +567,21 @@ router.get("/api/devices/:id/ping", async (req, res) => {
   try {
     const { id } = req.params;
     const snap = await db.collection("devices").doc(id).get();
-    
+
     if (!snap.exists) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Device not found" 
+      return res.status(404).json({
+        success: false,
+        message: "Device not found",
       });
     }
 
     const device = snap.data();
-    
+
     // Simple ping test - check if device has WAN IP and is marked online
     // In production, you'd ping the actual router IP via MikroTik API
     const isOnline = device.status === "online";
     const wanIp = device.wanIp || null;
-    
+
     // Simulate ping time (in real implementation, ping actual router)
     const pingTime = isOnline ? Math.floor(Math.random() * 50) + 10 : null;
 
@@ -472,15 +596,15 @@ router.get("/api/devices/:id/ping", async (req, res) => {
       status: isOnline ? "online" : "offline",
       pingTime: pingTime,
       wanIp: wanIp,
-      message: isOnline 
-        ? `Router is reachable${wanIp ? ` at ${wanIp}` : ""}` 
-        : "Router is not reachable. Please check connection and configuration."
+      message: isOnline
+        ? `Router is reachable${wanIp ? ` at ${wanIp}` : ""}`
+        : "Router is not reachable. Please check connection and configuration.",
     });
   } catch (err) {
     console.error("Ping error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Failed to ping device" 
+    res.status(500).json({
+      success: false,
+      message: "Failed to ping device",
     });
   }
 });
@@ -492,11 +616,16 @@ router.get("/api/devices/:id/logs", async (req, res) => {
   try {
     const { id } = req.params;
     const limitRaw = parseInt(String(req.query.limit || "200"), 10);
-    const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) ? limitRaw : 200, 500));
+    const limit = Math.max(
+      1,
+      Math.min(Number.isFinite(limitRaw) ? limitRaw : 200, 500),
+    );
 
     const deviceSnap = await db.collection("devices").doc(id).get();
     if (!deviceSnap.exists) {
-      return res.status(404).json({ success: false, message: "Device not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Device not found" });
     }
 
     const logsSnap = await db
@@ -511,7 +640,11 @@ router.get("/api/devices/:id/logs", async (req, res) => {
       const data = d.data() || {};
       let createdAtISO = data.createdAtISO || null;
       try {
-        if (!createdAtISO && data.createdAt && typeof data.createdAt.toDate === "function") {
+        if (
+          !createdAtISO &&
+          data.createdAt &&
+          typeof data.createdAt.toDate === "function"
+        ) {
           createdAtISO = data.createdAt.toDate().toISOString();
         }
       } catch (_) {}
@@ -528,7 +661,9 @@ router.get("/api/devices/:id/logs", async (req, res) => {
     return res.json({ success: true, logs });
   } catch (err) {
     console.error("Device logs error:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch logs" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch logs" });
   }
 });
 

@@ -1,13 +1,20 @@
 // backend/firebase.js
+// Force Firestore to prefer REST over gRPC (helps in restricted networks)
+process.env.FIRESTORE_PREFER_REST = process.env.FIRESTORE_PREFER_REST || "1";
+process.env.GOOGLE_CLOUD_DISABLE_GRPC =
+  process.env.GOOGLE_CLOUD_DISABLE_GRPC || "1";
+
 const admin = require("firebase-admin");
+const { Firestore } = require("@google-cloud/firestore");
 
 // Use environment variables for production, fallback to serviceAccountKey.json for development
 let serviceAccount;
 
 // Check if we have all required environment variables for production
-const hasAllEnvVars = process.env.FIREBASE_PRIVATE_KEY && 
-                     process.env.FIREBASE_PROJECT_ID && 
-                     process.env.FIREBASE_CLIENT_EMAIL;
+const hasAllEnvVars =
+  process.env.FIREBASE_PRIVATE_KEY &&
+  process.env.FIREBASE_PROJECT_ID &&
+  process.env.FIREBASE_CLIENT_EMAIL;
 
 if (process.env.NODE_ENV === "production" && hasAllEnvVars) {
   // Production: use environment variables
@@ -32,22 +39,29 @@ if (process.env.NODE_ENV === "production" && hasAllEnvVars) {
   // Development: use local serviceAccountKey.json
   try {
     serviceAccount = require("./serviceAccountKey.json");
-    console.log("Using local serviceAccountKey.json for Firebase configuration");
+    console.log(
+      "Using local serviceAccountKey.json for Firebase configuration",
+    );
   } catch (error) {
     console.error("Error loading serviceAccountKey.json:", error.message);
-    throw new Error("Firebase service account key not found. Please ensure serviceAccountKey.json exists in the backend directory.");
+    throw new Error(
+      "Firebase service account key not found. Please ensure serviceAccountKey.json exists in the backend directory.",
+    );
   }
 }
 
 if (!admin.apps.length) {
-  console.log("Initializing Firebase with project ID:", serviceAccount.project_id);
+  console.log(
+    "Initializing Firebase with project ID:",
+    serviceAccount.project_id,
+  );
   console.log("Service account has private_key:", !!serviceAccount.private_key);
-  
+
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     projectId: serviceAccount.project_id,
   });
-  
+
   console.log("Firebase initialized successfully");
 }
 
@@ -55,6 +69,7 @@ const db = admin.firestore();
 
 // Performance optimizations
 db.settings({
+  preferRest: true,
   // Enable offline persistence for better performance
   ignoreUndefinedProperties: true,
   // Optimize for read performance
@@ -75,7 +90,7 @@ db.collection = function (collectionPath) {
       if (duration > 1000) {
         // Log slow queries
         console.warn(
-          `Slow Firestore query on ${collectionPath}: ${duration}ms`
+          `Slow Firestore query on ${collectionPath}: ${duration}ms`,
         );
       }
       return snapshot;

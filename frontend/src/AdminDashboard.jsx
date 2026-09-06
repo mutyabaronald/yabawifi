@@ -30,10 +30,12 @@ import {
   FaFont,
   FaComment,
   FaChevronDown,
+  FaGlobe,
 } from "react-icons/fa";
 import UploadLogo from "./pages/UploadLogo";
 import OwnerStats from "./pages/OwnerStats";
 import VoucherManager from "./components/VoucherManager";
+import OwnerRoamingPanel from "./components/OwnerRoamingPanel";
 import OwnerProfile from "../owner/OwnerProfile";
 
 import OwnerPackages from "../owner/OwnerPackages";
@@ -495,6 +497,7 @@ function AdminDashboard() {
     { id: "packages", label: "Packages", icon: FaBox },
     { id: "financials", label: "Financials", icon: FaDollarSign },
     { id: "loyalty", label: "Loyalty Program", icon: FaChartBar },
+    { id: "roaming", label: "Roaming", icon: FaGlobe },
   ];
 
   const renderSidebarButton = (id, label, icon) => (
@@ -3827,6 +3830,10 @@ function AdminDashboard() {
                 </div>
               </div>
             </div>
+          )}
+
+          {activeSection === "dashboard" && activeTab === "roaming" && (
+            <OwnerRoamingPanel ownerId={ownerId} hotspots={hotspots} />
           )}
 
           {activeSection === "dashboard" && activeTab === "loyalty" && (

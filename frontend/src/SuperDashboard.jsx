@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import ThemeToggle from "./components/ThemeToggle";
+import SuperRoamingPanel from "./components/SuperRoamingPanel";
 
 function SuperDashboard() {
   const navigate = useNavigate();
@@ -2325,6 +2326,13 @@ function SuperDashboard() {
           >
             ⚙️ Settings
           </button>
+          <button
+            onClick={() => setActiveTab("roaming")}
+            className="admin-button"
+            style={styles.button}
+          >
+            🌐 Roaming
+          </button>
 
         {/* Logout Button */}
           <div style={{ marginTop: "auto", paddingTop: "20px" }}>
@@ -2769,6 +2777,7 @@ function SuperDashboard() {
           {!ownerDetails && activeTab === "audit" && renderAuditLogs()}
           {!ownerDetails && activeTab === "support" && renderSupport()}
           {!ownerDetails && activeTab === "settings" && renderSettings()}
+          {!ownerDetails && activeTab === "roaming" && <SuperRoamingPanel />}
       </main>
     </div>
     </>

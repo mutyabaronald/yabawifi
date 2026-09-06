@@ -40,6 +40,10 @@ export const apiConfig = {
     
     // MTN payment endpoints
     mtnPayment: '/api/mtn',
+
+    // Roaming federation registry (Phase 2)
+    roamingPartners: '/api/roaming/partners',
+    roamingHotspots: '/api/roaming/hotspots',
   }
 };
 

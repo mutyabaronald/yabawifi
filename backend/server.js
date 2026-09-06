@@ -32,6 +32,8 @@ const supportRoutes = require("./routes/support");
 const brandingRoutes = require("./routes/branding");
 const referralsRoutes = require("./routes/referrals");
 const ciscoRoutes = require("./routes/ciscoRoutes");
+const roamingPartnersRoutes = require("./routes/roaming/partners");
+const roamingHotspotsRoutes = require("./routes/roaming/hotspots");
 require("./ciscoExpiryCron");
 
 const { v4: uuidv4 } = require("uuid");
@@ -208,6 +210,8 @@ app.use("/api/support", supportRoutes);
 app.use("/api/branding", brandingRoutes);
 app.use("/api/referrals", referralsRoutes);
 app.use("/api/devices/cisco", ciscoRoutes);
+app.use("/api/roaming/partners", roamingPartnersRoutes);
+app.use("/api/roaming/hotspots", roamingHotspotsRoutes);
 app.use("/", devicesRoutes);
 app.use("/api/devices", deviceTrackingRoutes);
 

@@ -36,6 +36,7 @@ import UploadLogo from "./pages/UploadLogo";
 import OwnerStats from "./pages/OwnerStats";
 import VoucherManager from "./components/VoucherManager";
 import OwnerRoamingPanel from "./components/OwnerRoamingPanel";
+import OwnerEntitlementsPanel from "./components/OwnerEntitlementsPanel";
 import OwnerProfile from "../owner/OwnerProfile";
 
 import OwnerPackages from "../owner/OwnerPackages";
@@ -498,6 +499,7 @@ function AdminDashboard() {
     { id: "financials", label: "Financials", icon: FaDollarSign },
     { id: "loyalty", label: "Loyalty Program", icon: FaChartBar },
     { id: "roaming", label: "Roaming", icon: FaGlobe },
+    { id: "entitlements", label: "Entitlements", icon: FaUsers },
   ];
 
   const renderSidebarButton = (id, label, icon) => (
@@ -3834,6 +3836,10 @@ function AdminDashboard() {
 
           {activeSection === "dashboard" && activeTab === "roaming" && (
             <OwnerRoamingPanel ownerId={ownerId} hotspots={hotspots} />
+          )}
+
+          {activeSection === "dashboard" && activeTab === "entitlements" && (
+            <OwnerEntitlementsPanel ownerId={ownerId} />
           )}
 
           {activeSection === "dashboard" && activeTab === "loyalty" && (

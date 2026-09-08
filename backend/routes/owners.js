@@ -1,13 +1,33 @@
 const express = require("express");
 const multer = require("multer");
-const { db } = require("../firebase"); // Your Firestore config
+const { db } = require("../firebase");
 const cloudinary = require("cloudinary").v2;
 const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
-const bcrypt = require("bcryptjs");
+const {
+  hashPassword,
+  verifyUserPassword,
+  isBcryptHash,
+} = require("../services/passwordService");
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_AUTH_ATTEMPTS = 5;
+const ownerAuthRateLimitMap = new Map();
+
+function checkOwnerAuthRateLimit(key) {
+  const now = Date.now();
+  const record = ownerAuthRateLimitMap.get(key) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  if (now > record.resetAt) {
+    record.count = 0;
+    record.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  }
+  record.count += 1;
+  ownerAuthRateLimitMap.set(key, record);
+  return record.count <= RATE_LIMIT_MAX_AUTH_ATTEMPTS;
+}
 
 // Get owner info by phone number
 router.get("/by-phone/:phone", async (req, res) => {
@@ -65,6 +85,14 @@ cloudinary.config({
 // Owner Login - Optimized for performance
 router.post("/login", async (req, res) => {
   try {
+    const clientIp = req.ip || req.connection.remoteAddress || "unknown";
+    if (!checkOwnerAuthRateLimit(clientIp)) {
+      return res.status(429).json({
+        success: false,
+        message: "Too many login attempts. Please try again later.",
+      });
+    }
+
     const { phone, password } = req.body;
 
     if (!phone || !password) {
@@ -74,15 +102,19 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Optimize: Use document ID lookup if phone is the document ID, otherwise use query
+    if (!checkOwnerAuthRateLimit(phone)) {
+      return res.status(429).json({
+        success: false,
+        message: "Too many login attempts for this account. Please try again later.",
+      });
+    }
+
     let ownerDoc, ownerData;
 
     try {
-      // First try direct document access (faster if phone is used as doc ID)
       ownerDoc = await db.collection("owners").doc(phone).get();
       if (ownerDoc.exists) {
         ownerData = ownerDoc.data();
-        // Verify the phone matches (in case doc ID is different)
         if (ownerData.ownerPhone !== phone) {
           ownerDoc = null;
         }
@@ -93,7 +125,6 @@ router.post("/login", async (req, res) => {
       ownerDoc = null;
     }
 
-    // Fallback to query if direct access failed
     if (!ownerDoc || !ownerDoc.exists) {
       const ownerQuery = db
         .collection("owners")
@@ -112,31 +143,46 @@ router.post("/login", async (req, res) => {
       ownerData = ownerDoc.data();
     }
 
-    // Check password (in production, use bcrypt to hash passwords)
-    if (ownerData.password !== password) {
+    const passwordValid = await verifyUserPassword(
+      ownerData.password,
+      password
+    );
+
+    if (!passwordValid) {
       return res.status(401).json({
         success: false,
         message: "Invalid phone number or password",
       });
     }
 
-    // Generate simple token (in production, use JWT)
+    if (!isBcryptHash(ownerData.password)) {
+      const hashed = await hashPassword(password);
+      await db
+        .collection("owners")
+        .doc(ownerDoc.id)
+        .update({
+          password: hashed,
+          updatedAt: new Date().toISOString(),
+        });
+    }
+
     const token = uuidv4();
 
-    // Store token in Firestore for session management (async, don't wait)
     db.collection("owner_sessions")
       .doc(token)
       .set({
         ownerId: ownerDoc.id,
         phone: ownerData.ownerPhone,
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       })
       .catch((err) => {
         console.warn("Session storage failed:", err);
       });
 
-    // Return response immediately without waiting for session storage
+    ownerAuthRateLimitMap.delete(clientIp);
+    ownerAuthRateLimitMap.delete(phone);
+
     res.json({
       success: true,
       token,
@@ -254,14 +300,14 @@ router.post("/register", async (req, res) => {
     }
 
     // Create new owner
+    const hashedPassword = await hashPassword(password);
     const newOwner = {
       ownerName,
       ownerPhone,
-      // Store unhashed for backward compatibility; change-password route will migrate to hash on first change
-      password,
+      password: hashedPassword,
       businessName: businessName || "",
       logoUrl: "",
-      ownerWhatsapp: "", // WhatsApp number for user support
+      ownerWhatsapp: "",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -319,21 +365,14 @@ router.post("/change-password", async (req, res) => {
     const owner = ownerDoc.data();
 
     const stored = String(owner.password || "");
-    let currentOk = false;
-    if (stored.startsWith("$2a$") || stored.startsWith("$2b$")) {
-      // hashed already
-      currentOk = await bcrypt.compare(currentPassword, stored);
-    } else {
-      // legacy plaintext storage
-      currentOk = stored === currentPassword;
-    }
+    const currentOk = await verifyUserPassword(stored, currentPassword);
     if (!currentOk) {
       return res
         .status(401)
         .json({ success: false, message: "Wrong current password" });
     }
 
-    const newHash = await bcrypt.hash(newPassword, 10);
+    const newHash = await hashPassword(newPassword);
     await ownerRef.set(
       { password: newHash, updatedAt: new Date().toISOString() },
       { merge: true }

@@ -5,6 +5,28 @@ const {
   sendPasswordResetCode,
   verifyPasswordResetCode,
 } = require("../services/twilio");
+const {
+  hashPassword,
+  isBcryptHash,
+  verifyUserPassword,
+} = require("../services/passwordService");
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_AUTH_ATTEMPTS = 5;
+const authRateLimitMap = new Map();
+
+function checkAuthRateLimit(key) {
+  const now = Date.now();
+  const record =
+    authRateLimitMap.get(key) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  if (now > record.resetAt) {
+    record.count = 0;
+    record.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  }
+  record.count += 1;
+  authRateLimitMap.set(key, record);
+  return record.count <= RATE_LIMIT_MAX_AUTH_ATTEMPTS;
+}
 
 // Email registration endpoint - Creates Firebase Auth user and syncs to Firestore
 router.post("/register-email", async (req, res) => {
@@ -154,6 +176,14 @@ router.post("/auth-email", async (req, res) => {
 // User authentication endpoint - Optimized for performance
 router.post("/auth", async (req, res) => {
   try {
+    const clientIp = req.ip || req.connection.remoteAddress || "unknown";
+    if (!checkAuthRateLimit(clientIp)) {
+      return res.status(429).json({
+        success: false,
+        error: "Too many login attempts. Please try again later.",
+      });
+    }
+
     const { phone, password } = req.body;
 
     if (!phone || !password) {
@@ -163,11 +193,9 @@ router.post("/auth", async (req, res) => {
       });
     }
 
-    // Optimize: Use direct document access instead of query (much faster)
     let userDoc, userData;
 
     try {
-      // Try direct document access first (phone as document ID)
       userDoc = await db.collection("users").doc(phone).get();
       if (userDoc.exists) {
         userData = userDoc.data();
@@ -180,7 +208,6 @@ router.post("/auth", async (req, res) => {
       userData = null;
     }
 
-    // Fallback to query if direct access failed
     if (!userDoc || !userDoc.exists) {
       const userQuery = db
         .collection("users")
@@ -189,10 +216,10 @@ router.post("/auth", async (req, res) => {
       const snapshot = await userQuery.get();
 
       if (snapshot.empty) {
-        // Register new user - use phone as document ID for faster future lookups
+        const hashedPassword = await hashPassword(password);
         await db.collection("users").doc(phone).set({
           phone,
-          password,
+          password: hashedPassword,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });
@@ -208,29 +235,46 @@ router.post("/auth", async (req, res) => {
       }
     }
 
-    // Check if this is an auto-created user (no password set yet)
     if (!userData.password || userData.password === "") {
-      // This is an auto-created user from payment/voucher, set their password
+      const hashedPassword = await hashPassword(password);
       await db.collection("users").doc(phone).update({
         phone,
-        password,
+        password: hashedPassword,
         updatedAt: new Date().toISOString(),
         passwordSetAt: new Date().toISOString(),
       });
 
+      authRateLimitMap.delete(clientIp);
+      authRateLimitMap.delete(phone);
       return res.json({
         success: true,
         isNewUser: true,
         message: "Password set successfully",
       });
-    } else if (userData.password !== password) {
+    }
+
+    const passwordValid = await verifyUserPassword(
+      userData.password,
+      password
+    );
+
+    if (!passwordValid) {
       return res.status(401).json({
         success: false,
-        error: "Incorrect password",
+        error: "Invalid phone number or password",
       });
     }
 
-    // Valid existing user
+    if (!isBcryptHash(userData.password)) {
+      const hashedPassword = await hashPassword(password);
+      await db.collection("users").doc(phone).update({
+        password: hashedPassword,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    authRateLimitMap.delete(clientIp);
+    authRateLimitMap.delete(phone);
     return res.json({
       success: true,
       isNewUser: false,
@@ -630,9 +674,10 @@ router.post("/reset-password", async (req, res) => {
       });
     }
 
-    // Update password (we already found the user above)
+    // Update password with bcrypt hash
+    const hashedPassword = await hashPassword(newPassword);
     await db.collection("users").doc(userId).update({
-      password: newPassword,
+      password: hashedPassword,
       updatedAt: new Date().toISOString(),
       passwordSetAt: new Date().toISOString(),
     });
@@ -1327,3 +1372,6 @@ function calculateDataRemaining(dataUsed, dataLimitMB) {
 }
 
 module.exports = router;
+module.exports.verifyUserPassword = verifyUserPassword;
+module.exports.hashPassword = hashPassword;
+module.exports.isBcryptHash = isBcryptHash;

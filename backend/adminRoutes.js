@@ -7,8 +7,13 @@ const streamifier = require("streamifier");
 const { admin, db } = require("./firebase");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const { getProductionSecret } = require("./services/passwordService");
 
-const JWT_SECRET = process.env.SUPERADMIN_JWT_SECRET || "dev-super-secret";
+const JWT_SECRET = getProductionSecret(
+  "SUPERADMIN_JWT_SECRET",
+  "dev-super-secret",
+  "Super admin JWT secret"
+);
 const SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL || "owner@yaba";
 // Default dev hash for password "super123"
 const DEFAULT_SUPERADMIN_PASSWORD_HASH = bcrypt.hashSync(

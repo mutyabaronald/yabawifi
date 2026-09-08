@@ -3,8 +3,13 @@ const router = express.Router();
 
 const { db } = require("./firebase");
 const jwt = require("jsonwebtoken");
+const { getProductionSecret } = require("./services/passwordService");
 
-const JWT_SECRET = process.env.SUPERADMIN_JWT_SECRET || "dev-super-secret";
+const JWT_SECRET = getProductionSecret(
+  "SUPERADMIN_JWT_SECRET",
+  "dev-super-secret",
+  "Super admin JWT secret"
+);
 
 function verifySuperAdmin(req, res, next) {
   try {

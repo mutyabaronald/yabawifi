@@ -36,6 +36,7 @@ const roamingPartnersRoutes = require("./routes/roaming/partners");
 const roamingHotspotsRoutes = require("./routes/roaming/hotspots");
 const roamingEntitlementsRoutes = require("./routes/roaming/entitlements");
 const roamingAuthRoutes = require("./routes/roaming/auth");
+const roamingSessionsRoutes = require("./routes/roaming/sessions");
 require("./ciscoExpiryCron");
 
 const { v4: uuidv4 } = require("uuid");
@@ -216,6 +217,7 @@ app.use("/api/roaming/partners", roamingPartnersRoutes);
 app.use("/api/roaming/hotspots", roamingHotspotsRoutes);
 app.use("/api/roaming/entitlements", roamingEntitlementsRoutes);
 app.use("/api/roaming/auth", roamingAuthRoutes);
+app.use("/api/roaming/sessions", roamingSessionsRoutes);
 app.use("/", devicesRoutes);
 app.use("/api/devices", deviceTrackingRoutes);
 

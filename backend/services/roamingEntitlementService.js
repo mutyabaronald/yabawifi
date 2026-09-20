@@ -150,6 +150,43 @@ function validateQuota(quota) {
       throw new EntitlementError(400, "validation_error", "quota.maxMegabytes must be a non-negative number");
     }
   }
+  // Phase 7.3 additive fields: consumed / remaining RAUs (server-managed).
+  for (const field of ["usedMinutes", "remainingMinutes"]) {
+    if (quota[field] !== null && quota[field] !== undefined) {
+      if (typeof quota[field] !== "number" || quota[field] < 0 || !Number.isInteger(quota[field])) {
+        throw new EntitlementError(400, "validation_error", `quota.${field} must be a non-negative integer`);
+      }
+    }
+  }
+}
+
+function validateCommercial(commercial) {
+  if (!commercial || typeof commercial !== "object" || Array.isArray(commercial)) {
+    throw new EntitlementError(400, "validation_error", "commercial must be an object");
+  }
+  const { originalPrice, grantedRaus, rateNumerator, rateDenominator } = commercial;
+  if (!Number.isInteger(originalPrice) || originalPrice < 0) {
+    throw new EntitlementError(400, "validation_error", "commercial.originalPrice must be a non-negative integer (UGX)");
+  }
+  if (!Number.isInteger(grantedRaus) || grantedRaus <= 0) {
+    throw new EntitlementError(400, "validation_error", "commercial.grantedRaus must be a positive integer");
+  }
+  if (!Number.isInteger(rateNumerator) || rateNumerator !== originalPrice) {
+    throw new EntitlementError(400, "validation_error", "commercial.rateNumerator must equal originalPrice");
+  }
+  if (!Number.isInteger(rateDenominator) || rateDenominator !== grantedRaus) {
+    throw new EntitlementError(400, "validation_error", "commercial.rateDenominator must equal grantedRaus");
+  }
+  return commercial;
+}
+
+function computeRauSettlementValue(consumedRaus, commercial) {
+  validateCommercial(commercial);
+  const consumed = Number(consumedRaus);
+  if (!Number.isInteger(consumed) || consumed < 0) {
+    throw new EntitlementError(400, "validation_error", "consumedRaus must be a non-negative integer");
+  }
+  return Math.floor((consumed * commercial.rateNumerator) / commercial.rateDenominator);
 }
 
 async function loadOwner(ownerId) {
@@ -200,6 +237,9 @@ async function createEntitlement({
   assertEnum(payload.source || "manual", ENTITLEMENT_SOURCES, "source");
   validateValidity(payload.validity);
   validateQuota(payload.quota);
+  if (payload.commercial) {
+    validateCommercial(payload.commercial);
+  }
 
   // Verify home owner exists and is a valid roaming partner
   const homeOwner = await loadOwner(payload.homeOwnerId);
@@ -302,6 +342,7 @@ async function createEntitlement({
   if (payload.passpointIdentity) doc.passpointIdentity = payload.passpointIdentity;
   if (payload.nai) doc.nai = payload.nai;
   if (payload.realm) doc.realm = payload.realm;
+  if (payload.commercial) doc.commercial = payload.commercial;
 
   await db.collection("roaming_entitlements").doc(entitlementId).set(doc);
 
@@ -535,7 +576,17 @@ async function checkEntitlementEligibility({
   userId,
   visitedOwnerId,
   visitedHotspotId,
-}) {
+}, deps = {}) {
+  const listActiveEntitlements = deps.listActiveEntitlements || ((async ({ userId: uid }) => {
+    const snap = await db
+      .collection("roaming_entitlements")
+      .where("userRef.userId", "==", uid)
+      .where("status", "==", "active")
+      .get();
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }));
+  const loadPartner = deps.loadRoamingPartner || loadRoamingPartner;
+  const loadHotspot = deps.loadRoamingHotspot || loadRoamingHotspot;
   if (!userId) {
     return {
       eligible: false,
@@ -553,13 +604,9 @@ async function checkEntitlementEligibility({
   }
 
   // Find active entitlements for this user
-  const entitlementsSnap = await db
-    .collection("roaming_entitlements")
-    .where("userRef.userId", "==", userId)
-    .where("status", "==", "active")
-    .get();
+  const entitlements = await listActiveEntitlements({ userId });
 
-  if (entitlementsSnap.empty) {
+  if (!entitlements.length) {
     return {
       eligible: false,
       reason: "no_entitlement",
@@ -568,7 +615,7 @@ async function checkEntitlementEligibility({
   }
 
   // Check visited owner is an active roaming partner
-  const visitedPartner = await loadRoamingPartner(visitedOwnerId);
+  const visitedPartner = await loadPartner(visitedOwnerId);
   if (!visitedPartner) {
     return {
       eligible: false,
@@ -587,7 +634,7 @@ async function checkEntitlementEligibility({
 
   // Check visited hotspot if provided
   if (visitedHotspotId) {
-    const visitedHotspot = await loadRoamingHotspot(visitedHotspotId);
+    const visitedHotspot = await loadHotspot(visitedHotspotId);
     if (!visitedHotspot) {
       return {
         eligible: false,
@@ -615,9 +662,12 @@ async function checkEntitlementEligibility({
 
   const now = new Date();
 
+  // Phase 7.3: track whether every examined active entitlement was exhausted,
+  // so we can return a precise reason when none can authorize.
+  let exhaustedSeen = false;
+
   // Check each entitlement for eligibility
-  for (const doc of entitlementsSnap.docs) {
-    const entitlement = { id: doc.id, ...doc.data() };
+  for (const entitlement of entitlements) {
 
     // Check validity period
     if (entitlement.validity.startsAt) {
@@ -635,7 +685,7 @@ async function checkEntitlementEligibility({
     }
 
     // Check home owner is still valid
-    const homePartner = await loadRoamingPartner(entitlement.homeOwnerId);
+    const homePartner = await loadPartner(entitlement.homeOwnerId);
     if (!homePartner || homePartner.federationStatus !== "active") {
       continue; // Home partner no longer active
     }
@@ -665,8 +715,24 @@ async function checkEntitlementEligibility({
       }
     }
 
+    // Scope must match this entitlement; otherwise try the next entitlement.
     if (!scopeMatches) {
       continue; // Scope doesn't match
+    }
+
+    // Phase 7.3: an active entitlement with no remaining RAUs cannot authorize
+    // additional roaming access. `continue` so a different active entitlement
+    // (if any) can still authorize; if none qualify, the caller is rejected.
+    const q = entitlement.quota || {};
+    const remaining = q.remainingMinutes;
+    const granted = q.maxMinutes;
+    if (
+      granted > 0 &&
+      typeof remaining === "number" &&
+      remaining <= 0
+    ) {
+      exhaustedSeen = true;
+      continue; // This entitlement is fully consumed; try another
     }
 
     // If we reach here, the entitlement is eligible
@@ -686,8 +752,10 @@ async function checkEntitlementEligibility({
   // No matching entitlement found
   return {
     eligible: false,
-    reason: "scope_not_allowed",
-    message: "No entitlement matches the requested access scope",
+    reason: exhaustedSeen ? "quota_exhausted" : "scope_not_allowed",
+    message: exhaustedSeen
+      ? "Roaming entitlement RAU balance is exhausted"
+      : "No entitlement matches the requested access scope",
   };
 }
 
@@ -721,5 +789,7 @@ module.exports = {
   revokeEntitlement,
   restoreEntitlement,
   checkEntitlementEligibility,
+  validateCommercial,
+  computeRauSettlementValue,
   handleError,
 };

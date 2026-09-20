@@ -10,6 +10,7 @@ const {
   isBcryptHash,
   verifyUserPassword,
 } = require("../services/passwordService");
+const { getRoamingUsageForPhone } = require("../services/roamingUsageService");
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_AUTH_ATTEMPTS = 5;
@@ -738,7 +739,7 @@ router.get("/:phone/transactions", async (req, res) => {
         hotspotName: data.hotspotName,
         voucherCode: data.voucherCode,
         loyaltyPointsEarned: data.loyaltyPointsEarned,
-        originalPrice: data.packageValue || data.amount, // For calculating savings
+        originalPrice: data.packageValue || data.amount,
         ...data,
       };
     });
@@ -1361,6 +1362,21 @@ function calculateTimeRemaining(startTime, timeLimitMinutes) {
 
   return Math.max(0, Math.floor(remaining));
 }
+
+// Get user roaming usage & history (Phase 7.4 — read-only).
+// Identity is resolved server-side from the phone (the app's existing customer
+// identity convention). The service never trusts client-supplied userId /
+// entitlementId / sessionId / RAU values, and performs no writes.
+router.get("/:phone/roaming-usage", async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const result = await getRoamingUsageForPhone(phone);
+    res.json(result);
+  } catch (err) {
+    console.error("Error fetching roaming usage:", err);
+    res.status(500).json({ error: "Failed to fetch roaming usage" });
+  }
+});
 
 function calculateDataRemaining(dataUsed, dataLimitMB) {
   if (!dataLimitMB) return Infinity; // Unlimited data

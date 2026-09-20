@@ -52,7 +52,8 @@ router.post("/", async (req, res) => {
       pointsRequired,
       rewardType, // "time_access", "data_access", "unlimited"
       rewardValue, // minutes, MB, or null for unlimited
-      rewardDescription
+      rewardDescription,
+      roamingEligible = false
     } = req.body;
 
     if (!name || !ownerId || !type) {
@@ -65,7 +66,8 @@ router.post("/", async (req, res) => {
       type,
       status: "draft",
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      roamingEligible: Boolean(roamingEligible)
     };
 
     if (type === "wifi_package") {
@@ -142,7 +144,8 @@ router.put("/:packageId", async (req, res) => {
       pointsRequired,
       rewardType,
       rewardValue,
-      rewardDescription
+      rewardDescription,
+      roamingEligible
     } = req.body;
 
     const updateData = {
@@ -185,6 +188,8 @@ router.put("/:packageId", async (req, res) => {
       // Set price to 0 for loyalty rewards
       updateData.price = 0;
     }
+
+    if (roamingEligible !== undefined) updateData.roamingEligible = Boolean(roamingEligible);
 
     await db.collection("packages").doc(packageId).update(updateData);
     

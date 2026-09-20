@@ -16,6 +16,11 @@ const {
   listOwnerSessions,
   RoamingSessionError,
 } = require("../../services/roamingSessionService");
+const {
+  billConnectedMinutes,
+  finalBillOnDisconnect,
+} = require("../../services/roamingRauConsumptionService");
+const { triggerSettlementCredit } = require("../../services/roamingSettlementCreditGateway");
 const registry = require("../../services/roamingRegistryService");
 
 async function verifyUserIdentity(req) {
@@ -198,6 +203,32 @@ router.post("/:sessionId/terminate", async (req, res) => {
 
     const result = await terminateRoamingSession(sessionId, context);
 
+    // Phase 7.3: final bill the connected interval up to now, then stop.
+    // Server-side: uses session.endedAt-equivalent (now); no client RAU input.
+    if (result.session && result.session.entitlementId) {
+      try {
+        const billingContext = context.userId
+          ? { userId: context.userId }
+          : (context.ownerId ? { ownerId: context.ownerId } : {});
+        const endedAt = result.session.endedAt || new Date().toISOString();
+        const billing = await finalBillOnDisconnect({
+          sessionId,
+          context: billingContext,
+          endedAt,
+        });
+        // Phase 7.6F: trigger wallet credit for the settlement created during billing.
+        // Non-fatal: a credit failure leaves the settlement in "calculated" for retry.
+        try {
+          await triggerSettlementCredit(billing.settlement || {});
+        } catch (creditErr) {
+          console.error("Post-bill settlement credit trigger failed (non-fatal):", creditErr && creditErr.message ? creditErr.message : creditErr);
+        }
+        result.rauConsumption = billing;
+      } catch (billErr) {
+        console.error("Final RAU bill on terminate failed (session unaffected):", billErr && billErr.message ? billErr.message : billErr);
+      }
+    }
+
     return res.json({
       success: true,
       session: result.session,
@@ -232,6 +263,31 @@ router.post("/:sessionId/activity", async (req, res) => {
       context,
       { usedMinutes, usedMegabytes }
     );
+
+    // Phase 7.3: bill the connected interval for this heartbeat.
+    // Server-side timestamps; the client cannot control consumed/remaining RAUs.
+    // Failure-isolated: a billing error never breaks the session heartbeat
+    // (at-least-once recovery: lastBilledAt only advances on a successful write).
+    if (session.entitlementId) {
+      const billingContext = context.userId
+        ? { userId: context.userId }
+        : (context.ownerId ? { ownerId: context.ownerId } : {});
+      try {
+        const billing = await billConnectedMinutes({ sessionId, context: billingContext });
+        // Phase 7.6F: trigger wallet credit for the settlement created during billing.
+        // Non-fatal: a credit failure leaves the settlement in "calculated" for retry.
+        try {
+          await triggerSettlementCredit(billing.settlement || {});
+        } catch (creditErr) {
+          console.error("Post-bill settlement credit trigger failed (non-fatal):", creditErr && creditErr.message ? creditErr.message : creditErr);
+        }
+        // billConnectedMinutes disconnects the session via the existing Phase 6
+        // enforcement architecture when the entitlement is exhausted.
+        session.rauConsumption = billing;
+      } catch (billErr) {
+        console.error("RAU billing failed (session unaffected):", billErr && billErr.message ? billErr.message : billErr);
+      }
+    }
 
     return res.json({
       success: true,

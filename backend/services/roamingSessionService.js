@@ -605,14 +605,15 @@ async function listUserSessions(userId, options = {}) {
   return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
-async function listOwnerSessions(ownerId, options = {}) {
+async function listOwnerSessions(ownerId, options = {}, deps = {}) {
   if (!ownerId) {
     throw new RoamingSessionError(400, "VALIDATION_ERROR", "Owner ID is required");
   }
 
+  const firestore = deps.db || db;
   const { limit = 50, status } = options;
 
-  let query = db
+  let query = firestore
     .collection("roaming_sessions")
     .where("visitedOwnerId", "==", ownerId)
     .orderBy("createdAt", "desc")

@@ -12,6 +12,7 @@ import HotspotsMap from "./pages/HotspotsMap";
 import TransactionsSection from "./components/TransactionsSection";
 import LoyaltyProgram from "./components/LoyaltyProgram";
 import UserReviewsHistory from "./components/UserReviewsHistory";
+import RoamingUsage from "./components/RoamingUsage";
 import SupportCenter from "./components/SupportCenter";
 import { useTheme } from "./contexts/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
@@ -23,6 +24,7 @@ function UserDashboard() {
   const [userPhone, setUserPhone] = useState("");
   const [transactions, setTransactions] = useState([]);
   const [activePackages, setActivePackages] = useState([]);
+  const [roamingUsage, setRoamingUsage] = useState(null);
   const [loyaltyPoints, setLoyaltyPoints] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showRedeemModal, setShowRedeemModal] = useState(false);
@@ -73,6 +75,7 @@ function UserDashboard() {
     }
     setUserPhone(phone);
     fetchUserData(phone);
+    fetchRoamingUsage();
     // Check for activeTab override (e.g. after login)
     const tab = localStorage.getItem("activeTab");
     if (tab) {
@@ -145,12 +148,14 @@ function UserDashboard() {
     // Check session status every 5 seconds for near real-time updates
     const interval = setInterval(async () => {
       await checkAndUpdateSessionStatus();
+      await fetchRoamingUsage();
     }, 5000);
 
     setSessionCheckInterval(interval);
 
     // Initial check
     checkAndUpdateSessionStatus();
+    fetchRoamingUsage();
 
     return () => {
       if (interval) clearInterval(interval);
@@ -160,9 +165,10 @@ function UserDashboard() {
   // Refresh immediately when page/tab becomes visible
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        checkAndUpdateSessionStatus();
-      }
+        if (document.visibilityState === "visible") {
+          checkAndUpdateSessionStatus();
+          fetchRoamingUsage();
+        }
     };
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", onVisibility);
@@ -322,6 +328,19 @@ function UserDashboard() {
   // Function to manually refresh session status
   const refreshSessionStatus = async () => {
     await checkAndUpdateSessionStatus();
+  };
+
+  // Phase 7.4: authoritative roaming usage (read-only), kept in sync via the
+  // existing 5s refresh + visibility mechanism. Never writes accounting data.
+  const fetchRoamingUsage = async () => {
+    if (!userPhone) return;
+    try {
+      const res = await axios.get(`/api/users/${userPhone}/roaming-usage`);
+      setRoamingUsage(res.data || null);
+    } catch (err) {
+      console.error("Error fetching roaming usage:", err);
+      setRoamingUsage(null);
+    }
   };
 
   const fetchUserData = async (phone) => {
@@ -913,23 +932,63 @@ function UserDashboard() {
                   >
                     Transactions
                   </span>
-                  <span
-                    style={{
-                      ...styles.itemDescription,
-                      color: isDarkMode ? "var(--n8)" : "var(--n9)",
-                    }}
-                  >
-                    Payment history
-                  </span>
-                </div>
-              )}
-            </button>
+                <span
+                  style={{
+                    ...styles.itemDescription,
+                    color: isDarkMode ? "var(--n8)" : "var(--n9)",
+                  }}
+                >
+                  Payment history
+                </span>
+              </div>
+            )}
+          </button>
 
-            <button
-              className="yaba-card"
-              style={{
-                ...styles.sidebarItem,
-                ...(activeTab === "loyalty" ? styles.sidebarItemActive : {}),
+          <button
+            className="yaba-card"
+            style={{
+              ...styles.sidebarItem,
+              ...(activeTab === "roaming" ? styles.sidebarItemActive : {}),
+              color: isDarkMode ? "#e5e7eb" : "#374151",
+              background: isDarkMode ? "var(--surface-gradient)" : "var(--surface)",
+              border: isDarkMode ? "1px solid var(--stroke)" : "1px solid #e2e8f0",
+              borderRadius: 12,
+              margin: "4px 8px",
+              boxShadow: isDarkMode ? "0 8px 24px rgba(0,0,0,0.45)" : "0 4px 12px rgba(0,0,0,0.12)",
+            }}
+            onClick={() => {
+              setActiveTab("roaming");
+              setSidebarOpen(false);
+            }}
+          >
+            <span style={styles.itemIcon}>🌍</span>
+            {(!isDesktop || sidebarExpanded) && (
+              <div style={styles.itemContent}>
+                <span
+                  style={{
+                    ...styles.itemLabel,
+                    color: isDarkMode ? "var(--n2)" : "var(--n11)",
+                  }}
+                >
+                  Roaming
+                </span>
+                <span
+                  style={{
+                    ...styles.itemDescription,
+                    color: isDarkMode ? "var(--n8)" : "var(--n9)",
+                  }}
+                >
+                  My roaming usage
+                </span>
+              </div>
+            )}
+          </button>
+
+          <button
+            className="yaba-card"
+            style={{
+              ...styles.sidebarItem,
+              ...(activeTab === "loyalty" ? styles.sidebarItemActive : {}),
                 color: isDarkMode ? "#e5e7eb" : "#374151",
                 background: isDarkMode
                   ? "var(--surface-gradient)"
@@ -1347,6 +1406,12 @@ function UserDashboard() {
             <TransactionsSection
               transactions={Array.isArray(transactions) ? transactions : []}
             />
+          </div>
+        )}
+
+        {activeTab === "roaming" && (
+          <div style={styles.section}>
+            <RoamingUsage usage={roamingUsage} />
           </div>
         )}
 

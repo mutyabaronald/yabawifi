@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { db } = require("../firebase");
 const axios = require("axios"); // Added axios for external API calls
+const { createRoamingEntitlementFromPurchase } = require("../services/roamingEntitlementBridgeService");
 
 // Helper function to create or update user account
 async function createOrUpdateUser(phone) {
@@ -33,109 +34,6 @@ async function createOrUpdateUser(phone) {
     // Don't fail the receipt save if user creation fails
   }
 }
-
-router.post("/save", async (req, res) => {
-  const { phone, amount, packageName, ownerId } = req.body;
-
-  try {
-    const numericAmount = Number(amount) || 0;
-    const COMMISSION_PERCENTAGE = 25;
-    const commission = Math.round((numericAmount * COMMISSION_PERCENTAGE) / 100);
-
-    // Create or update user account automatically
-    await createOrUpdateUser(phone);
-
-    // Save receipt
-    const receiptRef = await db.collection("receipts").add({
-      phone,
-      amount: numericAmount,
-      packageName,
-      paymentMethod: "Mobile Money",
-      ownerId,
-      status: "Success",
-      time: new Date().toISOString(),
-      loyaltyPointsEarned: loyaltyPointsEarned,
-    });
-
-    // Award hotspot-specific loyalty points based on package configuration
-    let loyaltyPointsEarned = 0;
-    if (numericAmount > 0 && ownerId) {
-      try {
-        loyaltyPointsEarned = await awardHotspotSpecificLoyaltyPoints(phone, ownerId, packageName, numericAmount);
-      } catch (err) {
-        console.warn("Loyalty points award failed (non-blocking):", err.message);
-        // Don't fail the receipt save if loyalty fails
-      }
-    }
-
-    // Credit wallets: platform receives commission; owner receives net amount
-    if (ownerId && numericAmount > 0) {
-      const netAmount = numericAmount - commission;
-      const ownerWalletRef = db.collection("wallets").doc(ownerId);
-      const platformWalletRef = db.collection("wallets").doc("platform");
-      await db.runTransaction(async (transaction) => {
-        // Owner wallet
-        const ownerDoc = await transaction.get(ownerWalletRef);
-        let ownerData = { ownerId, balance: 0, transactions: [] };
-        if (ownerDoc.exists) ownerData = ownerDoc.data();
-        transaction.set(ownerWalletRef, {
-          ownerId,
-          balance: (ownerData.balance || 0) + netAmount,
-          transactions: [
-            { type: "credit", amount: netAmount, date: new Date().toISOString(), description: `Package sale: ${packageName}` },
-            ...(ownerData.transactions || [])
-          ].slice(0, 100)
-        }, { merge: true });
-
-        // Platform wallet (commission)
-        const platformDoc = await transaction.get(platformWalletRef);
-        let platformData = { id: "platform", balance: 0, transactions: [] };
-        if (platformDoc.exists) platformData = platformDoc.data();
-        transaction.set(platformWalletRef, {
-          id: "platform",
-          balance: (platformData.balance || 0) + commission,
-          transactions: [
-            { type: "commission", amount: commission, date: new Date().toISOString(), description: `Commission from ${ownerId} - ${packageName}` },
-            ...(platformData.transactions || [])
-          ].slice(0, 100)
-        }, { merge: true });
-
-        // Record payout split log
-        transaction.set(db.collection("payout_splits").doc(), {
-          ownerId,
-          grossAmount: numericAmount,
-          commissionAmount: commission,
-          commissionRate: COMMISSION_PERCENTAGE,
-          netAmount: netAmount,
-          packageName,
-          createdAt: new Date().toISOString(),
-          status: "recorded"
-        });
-      });
-    }
-
-    // Create WiFi session for the user
-    try {
-      await createWiFiSession(phone, packageName, ownerId, receiptRef.id);
-    } catch (err) {
-      console.warn("WiFi session creation failed (non-blocking):", err.message);
-      // Don't fail the receipt save if session creation fails
-    }
-
-    res.status(200).json({ 
-      success: true, 
-      message: "Payment successful!",
-      receiptId: receiptRef.id,
-      packageName,
-      packagePrice: numericAmount,
-      hotspotId: ownerId,
-      shouldShowReview: true
-    });
-  } catch (error) {
-    console.error("Error saving receipt:", error);
-    res.status(500).json({ error: "Failed to save receipt" });
-  }
-});
 
 // Helper function to award hotspot-specific loyalty points
 async function awardHotspotSpecificLoyaltyPoints(phone, ownerId, packageName, amount) {
@@ -302,7 +200,143 @@ async function createWiFiSession(phone, packageName, ownerId, receiptId) {
   }
 }
 
-module.exports = router;
+router.post("/save", async (req, res) => {
+  const { phone, amount, packageName, ownerId } = req.body;
+
+  const purchaseTime = new Date().toISOString();
+
+  try {
+    const numericAmount = Number(amount) || 0;
+    const COMMISSION_PERCENTAGE = 25;
+    const commission = Math.round((numericAmount * COMMISSION_PERCENTAGE) / 100);
+
+    // Create or update user account automatically
+    await createOrUpdateUser(phone);
+
+    // Award hotspot-specific loyalty points based on package configuration
+    let loyaltyPointsEarned = 0;
+    if (numericAmount > 0 && ownerId) {
+      try {
+        loyaltyPointsEarned = await awardHotspotSpecificLoyaltyPoints(phone, ownerId, packageName, numericAmount);
+      } catch (err) {
+        console.warn("Loyalty points award failed (non-blocking):", err.message);
+        // Don't fail the receipt save if loyalty fails
+      }
+    }
+
+    // Net amount the owner earns: numericAmount - commission
+    const netAmount = numericAmount - commission;
+
+    // Save receipt
+    const receiptRef = await db.collection("receipts").add({
+      phone,
+      amount: numericAmount,
+      packageName,
+      paymentMethod: "Mobile Money",
+      ownerId,
+      status: "Success",
+      time: purchaseTime,
+      loyaltyPointsEarned: loyaltyPointsEarned,
+    });
+
+    // Credit wallets: platform receives commission; owner receives netAmount
+    if (ownerId && numericAmount > 0) {
+      const ownerWalletRef = db.collection("wallets").doc(ownerId);
+      const platformWalletRef = db.collection("wallets").doc("platform");
+      await db.runTransaction(async (transaction) => {
+        // Owner wallet
+        const ownerDoc = await transaction.get(ownerWalletRef);
+        let ownerData = { ownerId, balance: 0, transactions: [] };
+        if (ownerDoc.exists) ownerData = ownerDoc.data();
+        transaction.set(ownerWalletRef, {
+          ownerId,
+          balance: (ownerData.balance || 0) + netAmount,
+          transactions: [
+            { type: "credit", amount: netAmount, date: new Date().toISOString(), description: `Package sale: ${packageName}` },
+            ...(ownerData.transactions || [])
+          ].slice(0, 100)
+        }, { merge: true });
+
+        // Platform wallet (commission)
+        const platformDoc = await transaction.get(platformWalletRef);
+        let platformData = { id: "platform", balance: 0, transactions: [] };
+        if (platformDoc.exists) platformData = platformDoc.data();
+        transaction.set(platformWalletRef, {
+          id: "platform",
+          balance: (platformData.balance || 0) + commission,
+          transactions: [
+            { type: "commission", amount: commission, date: new Date().toISOString(), description: `Commission from ${ownerId} - ${packageName}` },
+            ...(platformData.transactions || [])
+          ].slice(0, 100)
+        }, { merge: true });
+
+        // Record payout split log
+        transaction.set(db.collection("payout_splits").doc(), {
+          ownerId,
+          grossAmount: numericAmount,
+          commissionAmount: commission,
+          commissionRate: COMMISSION_PERCENTAGE,
+          netAmount: netAmount,
+          packageName,
+          createdAt: new Date().toISOString(),
+          status: "recorded"
+        });
+      });
+    }
+
+    // ADDITIVE roaming entitlement bridge. Runs ONLY after the receipt
+    // (status "Success") is committed. It resolves the purchased package using the
+    // existing authoritative lookup convention (ownerId + packageName -> package
+    // document), the same query createWiFiSession uses. The bridge checks
+    // roamingEligible itself; local/non-roaming packages incur only this single
+    // package read and create no roaming entitlements.
+    // Fully failure-isolated: any error here is logged and never invalidates the
+    // successful purchase (the receipt is already written).
+    try {
+      if (packageName && ownerId) {
+        const packageSnap = await db
+          .collection("packages")
+          .where("ownerId", "==", ownerId)
+          .where("name", "==", packageName)
+          .limit(1)
+          .get();
+        if (!packageSnap.empty) {
+          const pkg = { id: packageSnap.docs[0].id, ...packageSnap.docs[0].data() };
+          await createRoamingEntitlementFromPurchase({
+            phone,
+            pkg,
+            receiptId: receiptRef.id,
+            validityStartsAt: purchaseTime,
+          });
+        }
+      }
+    } catch (bridgeErr) {
+      // Never invalidate a successful purchase due to a roaming bridge failure.
+      console.warn("Roaming entitlement bridge skipped (purchase unaffected):", bridgeErr && bridgeErr.message ? bridgeErr.message : bridgeErr);
+    }
+
+    // Create WiFi session for the user
+    try {
+      await createWiFiSession(phone, packageName, ownerId, receiptRef.id);
+    } catch (err) {
+      console.warn("WiFi session creation failed (non-blocking):", err.message);
+      // Don't fail the receipt save if session creation fails
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: "Payment successful!",
+      receiptId: receiptRef.id,
+      packageName,
+      packagePrice: numericAmount,
+      hotspotId: ownerId,
+      shouldShowReview: true
+    });
+  } catch (error) {
+    console.error("Error saving receipt:", error);
+    res.status(500).json({ error: "Failed to save receipt" });
+  }
+});
 
 // List receipts by owner (basic endpoint for stats)
 router.get("/owner/:ownerId", async (req, res) => {
@@ -346,3 +380,5 @@ router.get("/owner/:ownerId", async (req, res) => {
     res.status(500).json({ receipts: [] });
   }
 });
+
+module.exports = router;

@@ -5,6 +5,7 @@ const { getRoamingSession, SESSION_STATUSES, ACTIVE_STATUSES, RoamingSessionErro
 const {
   resolveAAAAdapter,
   isAAAAdapterAvailable,
+  getAAAAdapterEntry,
   RoamingAAAAdapterRegistryError,
 } = require("./roamingAAAAdapterRegistry");
 const { RoamingAAAAdapterError, nowIso } = require("./roamingAAAAdapter");
@@ -146,11 +147,20 @@ async function resolveAdapterForSession(session) {
 
   const key = session.aaaAdapterKey;
 
-  if (!isAAAAdapterAvailable(key)) {
+  const entry = getAAAAdapterEntry(key);
+  if (entry && !entry.enabled) {
+    throw new RoamingEnforcementError(
+      503,
+      "ADAPTER_DISABLED",
+      `AAA adapter '${key}' is explicitly disabled`
+    );
+  }
+
+  if (!entry || entry.state === "error") {
     throw new RoamingEnforcementError(
       503,
       "ADAPTER_UNAVAILABLE",
-      `AAA adapter '${key}' is registered but unavailable`
+      `AAA adapter '${key}' is registered but unavailable (state: ${entry ? entry.state : "not_registered"})`
     );
   }
 
@@ -161,7 +171,9 @@ async function resolveAdapterForSession(session) {
     if (err instanceof RoamingAAAAdapterRegistryError) {
       throw new RoamingEnforcementError(
         503,
-        "ADAPTER_UNAVAILABLE",
+        err.code === "ADAPTER_NOT_FOUND"
+          ? "ADAPTER_UNAVAILABLE"
+          : "ADAPTER_UNAVAILABLE",
         `AAA adapter '${key}' is not available: ${err.message}`
       );
     }
@@ -180,7 +192,27 @@ async function resolveAdapterForSession(session) {
     );
   }
 
+  const caps = typeof adapter.getCapabilities === "function" ? adapter.getCapabilities() : {};
+  if (caps && caps.provisionAccess === false) {
+    throw new RoamingEnforcementError(
+      501,
+      "ADAPTER_NOT_IMPLEMENTED",
+      `Adapter '${key}' does not support provisionAccess capability`
+    );
+  }
+
   return { adapter, key };
+}
+
+function checkAdapterCapability(adapter, operation) {
+  const caps = typeof adapter.getCapabilities === "function" ? adapter.getCapabilities() : {};
+  if (caps && caps[operation] === false) {
+    throw new RoamingEnforcementError(
+      501,
+      "ADAPTER_NOT_IMPLEMENTED",
+      `Adapter '${adapter.aaaAdapterKey}' does not support ${operation} capability`
+    );
+  }
 }
 
 async function provisionSessionEnforcement(sessionId, context = {}, idempotencyKey = null, metadata = {}) {
@@ -290,6 +322,7 @@ async function provisionSessionEnforcement(sessionId, context = {}, idempotencyK
 
     let provisionResult;
     try {
+      checkAdapterCapability(adapter, "provisionAccess");
       provisionResult = await adapter.provisionAccess(
         RoamingAAAAdapter.buildContext({
           sessionId,
@@ -466,6 +499,7 @@ async function revokeSessionEnforcement(sessionId, context = {}, reason = "admin
     }
 
     try {
+      checkAdapterCapability(adapter, "revokeAccess");
       await adapter.revokeAccess(
         RoamingAAAAdapter.buildContext({
           sessionId,
@@ -600,6 +634,7 @@ async function disconnectSessionEnforcement(sessionId, context = {}) {
     }
 
     try {
+      checkAdapterCapability(adapter, "disconnect");
       await adapter.disconnect(
         RoamingAAAAdapter.buildContext({
           sessionId,
@@ -668,6 +703,7 @@ async function getSessionUsage(sessionId, context = {}) {
 
   let usage;
   try {
+    checkAdapterCapability(adapter, "getUsage");
     usage = await adapter.getUsage(
       RoamingAAAAdapter.buildContext({
         sessionId,

@@ -6,6 +6,7 @@ const {
   RoamingAuthError,
 } = require("./roamingAuthService");
 const { checkEntitlementEligibility } = require("./roamingEntitlementService");
+const { AAA_ADAPTER_KEYS } = require("./roamingAAAAdapter");
 
 const SESSION_STATUSES = Object.freeze([
   "authorized",
@@ -135,13 +136,33 @@ async function createRoamingSession({
     ? new Date(eligibility.expiresAt)
     : null;
 
-  let sessionExpiresAt;
+   let sessionExpiresAt;
   if (entitlementExpiresAt && entitlementExpiresAt > now) {
     sessionExpiresAt = entitlementExpiresAt.toISOString();
   } else {
     sessionExpiresAt = new Date(
       now.getTime() + DEFAULT_SESSION_TTL_HOURS * 60 * 60 * 1000
     ).toISOString();
+  }
+
+  // Phase 8.1: Resolve AAA adapter identity from TRUSTED server-side
+  // hotspot registry data.  The client never supplies this — it is
+  // determined by which hotspot the user authenticated against.
+  // `visitedHotspotId` originates from the signed JWT claims (authoritative).
+  const hotspotSnap = await db
+    .collection("roaming_hotspots")
+    .doc(visitedHotspotId)
+    .get();
+  let aaaAdapterKey = "unknown";
+  if (hotspotSnap.exists) {
+    const hotspot = hotspotSnap.data();
+    if (
+      hotspot.aaaAdapterKey &&
+      typeof hotspot.aaaAdapterKey === "string" &&
+      AAA_ADAPTER_KEYS.includes(hotspot.aaaAdapterKey)
+    ) {
+      aaaAdapterKey = hotspot.aaaAdapterKey;
+    }
   }
 
   let result;
@@ -228,6 +249,7 @@ async function createRoamingSession({
         entitlementId,
         agreementId,
         authPath,
+        aaaAdapterKey,
         status: "authorized",
         startedAt: nowIso(),
         lastActivityAt: nowIso(),

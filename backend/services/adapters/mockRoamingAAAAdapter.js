@@ -2,6 +2,9 @@ const { RoamingAAAAdapter, RoamingAAAAdapterError, ENFORCEMENT_RESULT_SUCCESS, E
 
 const MOCK_ADAPTER_KEY = "mock";
 
+const isMockAllowed = () =>
+  String(process.env.ROAMING_MOCK_AAA_ENABLED || "false").toLowerCase() === "true";
+
 class MockRoamingAAAAdapter extends RoamingAAAAdapter {
   constructor(config = {}) {
     super({
@@ -24,7 +27,18 @@ class MockRoamingAAAAdapter extends RoamingAAAAdapter {
     this._failNext = null;
   }
 
+  _safetyCheck() {
+    if (!isMockAllowed()) {
+      throw new RoamingAAAAdapterError(
+        503,
+        "MOCK_ADAPTER_DISABLED",
+        "Mock AAA adapter is disabled. Set ROAMING_MOCK_AAA_ENABLED=true for development/test."
+      );
+    }
+  }
+
   _failIfMocked(err) {
+    this._safetyCheck();
     if (this._failNext) {
       const e = this._failNext;
       this._failNext = null;

@@ -42,6 +42,18 @@ const roamingDashboardRoutes = require("./routes/roaming/dashboard");
 require("./ciscoExpiryCron");
 require("./services/roamingExpiryCron");
 
+// Phase 8.1: Conditional mock AAA adapter registration (development/test only)
+const ROAMING_MOCK_AAA_ENABLED =
+  String(process.env.ROAMING_MOCK_AAA_ENABLED || "false").toLowerCase() === "true";
+if (ROAMING_MOCK_AAA_ENABLED) {
+  const { MockRoamingAAAAdapter } = require("./services/adapters/mockRoamingAAAAdapter");
+  const { registerAAAAdapter } = require("./services/roamingAAAAdapterRegistry");
+  registerAAAAdapter(new MockRoamingAAAAdapter());
+  console.log("[RoamingAAA] Mock AAA adapter registered (ROAMING_MOCK_AAA_ENABLED=true)");
+} else {
+  console.log("[RoamingAAA] Mock AAA adapter disabled (ROAMING_MOCK_AAA_ENABLED=false, default)");
+}
+
 const { v4: uuidv4 } = require("uuid");
 
 const app = express();

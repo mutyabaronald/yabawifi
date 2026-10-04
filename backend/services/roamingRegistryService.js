@@ -613,6 +613,39 @@ async function disableHotspot({ ownerId, hotspotId, actor, idempotencyKey }) {
   return { hotspot: { id: saved.id, ...saved.data() } };
 }
 
+// Phase 8.3 (DEFECT-8.3-01): the public discovery endpoint is unauthenticated.
+// Hotspot documents hold RADIUS infrastructure, credential and internal
+// bookkeeping fields, so the response is projected through this explicit
+// allowlist instead of spreading the stored document. Anything not named here
+// is never emitted, including fields added in future phases.
+const PUBLIC_DISCOVERY_NETWORK_IDENTITY_FIELDS = Object.freeze(["venueName"]);
+
+function publicString(value) {
+  return typeof value === "string" ? value : null;
+}
+
+function toPublicNetworkIdentity(networkIdentity) {
+  const projected = {};
+  if (!networkIdentity || typeof networkIdentity !== "object") return projected;
+  for (const field of PUBLIC_DISCOVERY_NETWORK_IDENTITY_FIELDS) {
+    projected[field] = publicString(networkIdentity[field]);
+  }
+  return projected;
+}
+
+function toPublicDiscoveryEntry(docId, data) {
+  return {
+    id: docId,
+    hotspotId: publicString(data.hotspotId),
+    ownerId: publicString(data.ownerId),
+    aaaAdapterKey: publicString(data.aaaAdapterKey),
+    enforcementMode: publicString(data.enforcementMode),
+    isDiscoverable: typeof data.isDiscoverable === "boolean" ? data.isDiscoverable : null,
+    partnerStatus: publicString(data.partnerStatus),
+    networkIdentity: toPublicNetworkIdentity(data.networkIdentity),
+  };
+}
+
 async function discoverHotspots() {
   assertRegistryEnabled();
   const partnersSnap = await db
@@ -630,7 +663,7 @@ async function discoverHotspots() {
   hotspotsSnap.forEach((doc) => {
     const data = doc.data() || {};
     if (!activeOwnerIds.has(data.ownerId)) return;
-    hotspots.push({ id: doc.id, ...data });
+    hotspots.push(toPublicDiscoveryEntry(doc.id, data));
   });
   return { hotspots, count: hotspots.length };
 }
@@ -667,6 +700,8 @@ module.exports = {
   ENFORCEMENT_MODES,
   AAA_ADAPTER_KEYS,
   CAPABILITY_BOOL_KEYS,
+  PUBLIC_DISCOVERY_NETWORK_IDENTITY_FIELDS,
+  toPublicDiscoveryEntry,
   optInPartner,
   getPartnerStatus,
   listPartners,

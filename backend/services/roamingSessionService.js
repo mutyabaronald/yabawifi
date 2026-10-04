@@ -7,6 +7,67 @@ const {
 } = require("./roamingAuthService");
 const { checkEntitlementEligibility } = require("./roamingEntitlementService");
 const { AAA_ADAPTER_KEYS } = require("./roamingAAAAdapter");
+const { getAAAAdapterEntry } = require("./roamingAAAAdapterRegistry");
+const { createRadiusProfileService } = require("./radiusProfiles");
+
+const RADIUS_ADAPTER_KEY = "radius";
+
+// Phase 8.3 (D-1): the RADIUS profile store is dependency-injected and inert by
+// default. With nothing injected no profile ever resolves, so production cannot
+// activate a RADIUS profile until the Phase 8.4 store is wired.
+const RADIUS_PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+
+let radiusProfileService = createRadiusProfileService();
+
+function setRadiusProfileResolver(resolver) {
+  radiusProfileService =
+    resolver && typeof resolver.getProfile === "function"
+      ? resolver
+      : createRadiusProfileService();
+  return radiusProfileService;
+}
+
+function resetRadiusProfileResolver() {
+  radiusProfileService = createRadiusProfileService();
+  return radiusProfileService;
+}
+
+function isRadiusAdapterRegistered(adapterKey) {
+  if (adapterKey !== RADIUS_ADAPTER_KEY) return false;
+  const entry = getAAAAdapterEntry(adapterKey);
+  if (!entry || !entry.adapter) return false;
+  return entry.adapter.aaaAdapterKey === RADIUS_ADAPTER_KEY;
+}
+
+/**
+ * Phase 8.3 (D-1): resolve the trusted RADIUS profile id for a session.
+ *
+ * All four conditions must hold or nothing is returned and the caller omits the
+ * field entirely - no partial resolution and never the raw stored string. Any
+ * resolution failure is treated as "not resolvable" so the session falls back to
+ * the profile default rather than failing.
+ */
+async function resolveRadiusProfileId(hotspot) {
+  if (!hotspot || typeof hotspot !== "object") return null;
+
+  const candidate = hotspot.radiusProfileId;
+  if (typeof candidate !== "string") return null;
+  if (!RADIUS_PROFILE_ID_PATTERN.test(candidate)) return null;
+  if (hotspot.enforcementMode !== RADIUS_ADAPTER_KEY) return null;
+  if (!isRadiusAdapterRegistered(hotspot.aaaAdapterKey)) return null;
+
+  let profile = null;
+  try {
+    profile = await radiusProfileService.getProfile(candidate);
+  } catch (err) {
+    return null;
+  }
+
+  if (!profile || typeof profile !== "object") return null;
+  if (profile.profileId !== candidate) return null;
+
+  return candidate;
+}
 
 const SESSION_STATUSES = Object.freeze([
   "authorized",
@@ -154,6 +215,7 @@ async function createRoamingSession({
     .doc(visitedHotspotId)
     .get();
   let aaaAdapterKey = "unknown";
+  let radiusProfileId = null;
   if (hotspotSnap.exists) {
     const hotspot = hotspotSnap.data();
     if (
@@ -163,6 +225,7 @@ async function createRoamingSession({
     ) {
       aaaAdapterKey = hotspot.aaaAdapterKey;
     }
+    radiusProfileId = await resolveRadiusProfileId(hotspot);
   }
 
   let result;
@@ -264,6 +327,12 @@ async function createRoamingSession({
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
+
+      // Written only when the Phase 8.3 (D-1) predicate fully resolved a
+      // trusted profile. Absent otherwise, so no raw stored value is persisted.
+      if (radiusProfileId) {
+        sessionData.radiusProfileId = radiusProfileId;
+      }
 
       transaction.set(sessionRef, sessionData);
 
@@ -695,7 +764,12 @@ async function expireSessions() {
 module.exports = {
   SESSION_STATUSES,
   ACTIVE_STATUSES,
+  RADIUS_ADAPTER_KEY,
+  RADIUS_PROFILE_ID_PATTERN,
   RoamingSessionError,
+  setRadiusProfileResolver,
+  resetRadiusProfileResolver,
+  resolveRadiusProfileId,
   createRoamingSession,
   getRoamingSession,
   terminateRoamingSession,

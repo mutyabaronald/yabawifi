@@ -27,12 +27,39 @@ router.post("/create", async (req, res) => {
       routerType,
       latitude,
       longitude,
+      // Phase 8.5A: binds this hotspot to the router that will enforce it.
+      deviceId,
     } = req.body;
     if (!ownerId || !hotspotName || !address || !routerType) {
       return res
         .status(400)
         .json({ success: false, message: "Missing required fields." });
     }
+
+    // A hotspot may only be bound to a device owned by the SAME owner. Without
+    // this check, any owner could point a hotspot at another owner's router and
+    // have YabaLink write HotSpot users onto a device it does not control.
+    let resolvedDeviceId = null;
+    if (deviceId !== undefined && deviceId !== null && deviceId !== "") {
+      const deviceSnap = await db
+        .collection("devices")
+        .doc(String(deviceId))
+        .get();
+      if (!deviceSnap.exists) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Device not found." });
+      }
+      const device = deviceSnap.data() || {};
+      if (String(device.ownerId) !== String(ownerId)) {
+        return res.status(403).json({
+          success: false,
+          message: "That device belongs to another owner.",
+        });
+      }
+      resolvedDeviceId = deviceSnap.id;
+    }
+
     const integrationKey = uuidv4();
     // Get owner's reviews setting
     const ownerDoc = await db.collection("owners").doc(ownerId).get();
@@ -48,6 +75,11 @@ router.post("/create", async (req, res) => {
       longitude: typeof longitude === "number" ? longitude : null,
       status: "online",
       integrationKey,
+      // Phase 8.5A: which router enforces this hotspot. Null for hotspots that
+      // are not yet bound to a router. A future router-control adapter resolves
+      // enforcement through this field, so a hotspot can never be enforced on a
+      // router other than the one its owner registered.
+      deviceId: resolvedDeviceId,
       createdAt: new Date().toISOString(),
       loyalty_program_enabled: true,
       reviewsEnabled: ownerData.reviewsEnabled || false,

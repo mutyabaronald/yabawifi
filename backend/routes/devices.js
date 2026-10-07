@@ -7,9 +7,248 @@ const { v4: uuidv4 } = require("uuid");
 const { admin, db } = require("../firebase");
 const { checkCiscoConnection } = require("../services/ciscoService");
 
+// Existing owner/superadmin authentication. These are the SAME guards every
+// /api/roaming/* route already uses (roamingRegistryService.js:66-134). No new
+// authentication system is introduced here: owner sessions are the existing
+// `owner_sessions` bearer tokens, and superadmin is the existing signed JWT.
+const registry = require("../services/roamingRegistryService");
+
+const {
+  NETWORK_CONTROL_VALUES,
+  DEFAULT_ROUTER_OS_API_PORT,
+  normalizeNetworkControl,
+} = require("../services/mikrotik/featureFlag");
+
 // ✅ ENV VARS (set these in .env)
 const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL || "http://localhost:5000"; // public URL reachable by routers
-const CALLBACK_SECRET = process.env.CALLBACK_SECRET || "supersecret"; // simple shared secret for callbacks
+
+// ─────────────────────────────────────────────────────────────
+// Device callback authentication (Phase 8.5A security hardening)
+// ─────────────────────────────────────────────────────────────
+// ARCHITECTURAL ROLE
+//   GET /api/devices/connected is NOT a user-facing owner endpoint. It is an
+//   INTERNAL SERVICE CALLBACK invoked BY THE ROUTER ITSELF: the generated
+//   bootstrap script embeds a `/tool fetch` URL that the MikroTik device
+//   executes after it applies its configuration (see the bootstrap route).
+//   The router has no owner session and no superadmin JWT, so owner/superadmin
+//   authentication cannot apply here. A shared secret is therefore the correct
+//   mechanism for this endpoint.
+//
+// WHAT WAS WRONG
+//   The secret defaulted to the literal "supersecret". Anyone who knew that
+//   default could mark any device online or offline. Worse, render.yaml does not
+//   set CALLBACK_SECRET, so the deployed service ran with that guessable default.
+//
+// FINAL BEHAVIOUR
+//   * No default value. An unset CALLBACK_SECRET is treated as "not configured".
+//   * A weak/known literal is refused just as hard as an unset value.
+//   * When not configured the endpoint fails CLOSED with 503 and accepts nothing.
+//   * Comparison is length-checked and constant-time.
+//   * The secret is never logged, never returned and never echoed.
+const CALLBACK_SECRET_ENV_VAR = "CALLBACK_SECRET";
+const CALLBACK_SECRET_MIN_LENGTH = 16;
+
+// Known-weak values that must never be accepted as a real credential.
+const WEAK_CALLBACK_SECRETS = new Set([
+  "supersecret",
+  "changeme",
+  "secret",
+  "password",
+  "supersecretpassword",
+  "yabalink",
+]);
+
+const CONFIGURED_CALLBACK_SECRET = process.env[CALLBACK_SECRET_ENV_VAR] || null;
+
+function isCallbackSecretConfigured() {
+  const value = CONFIGURED_CALLBACK_SECRET;
+  if (typeof value !== "string" || value.length < CALLBACK_SECRET_MIN_LENGTH) {
+    return false;
+  }
+  if (WEAK_CALLBACK_SECRETS.has(value.toLowerCase())) return false;
+  return true;
+}
+
+// Constant-time comparison that does not leak length via early return.
+function secretsMatch(provided, expected) {
+  const a = Buffer.from(String(provided), "utf8");
+  const b = Buffer.from(String(expected), "utf8");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Credential redaction helpers (Phase 8.5A security hardening)
+// ─────────────────────────────────────────────────────────────
+// Every device response boundary strips credential material. The document in
+// Firestore keeps the secrets the backend legitimately needs; only the response
+// is sanitized.
+
+const DEVICE_SECRET_FIELDS = Object.freeze([
+  "sshPassword",
+  "enablePassword",
+  "token",
+  "routerOsApiSecretRef",
+  "routerOsApiUsername",
+  "routerOsApiPassword",
+  "password",
+  "secret",
+  "apiPassword",
+  "callbacksSecret",
+]);
+
+function sanitizeDevice(device) {
+  if (!device || typeof device !== "object") return device;
+  const safe = { ...device };
+  for (const field of DEVICE_SECRET_FIELDS) {
+    delete safe[field];
+  }
+  // Credential STATE, never credential material.
+  //
+  // Because the stored password is no longer returned, the edit form cannot tell
+  // "a password is stored, leave it alone" from "no password is stored, ask the
+  // owner for one". These booleans close that gap without ever putting the secret
+  // in a response. They are the only credential-derived values ever emitted.
+  safe.hasPassword = Boolean(device.sshPassword);
+  safe.hasEnablePassword = Boolean(device.enablePassword);
+  return safe;
+}
+
+// Recursively replace credential-bearing VALUES with a marker. Used on log
+// `meta` objects so a credential cannot ride out inside a nested structure.
+const SENSITIVE_VALUE_KEYS = new Set([
+  "sshpassword",
+  "enablepassword",
+  "password",
+  "passphrase",
+  "token",
+  "secret",
+  "apipassword",
+  "api_password",
+  "routerosapipassword",
+  "routerosapisecretref",
+  "routerosapiusername",
+  "callbacksecret",
+  "callbackssecret",
+  "sharedsecret",
+]);
+
+function redactSensitiveFields(value, depth = 0) {
+  if (depth > 6) return null;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveFields(item, depth + 1));
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, inner] of Object.entries(value)) {
+      out[key] = SENSITIVE_VALUE_KEYS.has(key.toLowerCase())
+        ? "[REDACTED]"
+        : redactSensitiveFields(inner, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Diagnostics echo router-reported messages back to the caller. Strip anything
+// credential-shaped so an SSH or ping failure can never surface a password, a
+// token or a secret reference, whatever the router or driver put in it.
+function redactDiagnosticMessage(message) {
+  if (typeof message !== "string" || message.length === 0) {
+    return "Device diagnostic failed";
+  }
+  return message
+    .replace(
+      /\b(sshPassword|enablePassword|password|passphrase|apiPassword|secret|token|routerOsApiSecretRef|routerOsApiUsername)\b(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;)]+)/gi,
+      (match, key, separator) => `${key}${separator}[REDACTED]`,
+    )
+    .slice(0, 300);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Owner / device authorization helpers (Phase 8.5A security hardening)
+// ─────────────────────────────────────────────────────────────
+// ONE ownership rule, applied consistently to every device endpoint:
+//
+//   superadmin -> permitted, per the existing superadmin model
+//   owner       -> only a device whose device.ownerId === authenticated ownerId
+//   anonymous   -> 401, always
+//
+// The authenticated identity is authoritative. A URL ownerId, body ownerId or
+// query-string ownerId is NEVER trusted on its own; it is only ever compared
+// against the identity established by the existing guard.
+//
+// Every /api/roaming/* route already uses this model (roamingRegistryService.js:66-134).
+// No new authentication system is introduced here: owner sessions are the existing
+// `owner_sessions` bearer tokens, and superadmin is the existing signed JWT.
+
+/**
+ * Authenticate, then load the device, then enforce ownership.
+ *
+ * Authentication happens BEFORE the device lookup, so an anonymous caller can
+ * never distinguish "device exists" from "device does not exist".
+ */
+async function requireOwnedDevice(req, deviceId) {
+  const auth = await registry.authenticateOwnerOrSuper(req);
+  const snap = await db.collection("devices").doc(String(deviceId)).get();
+  if (!snap.exists) {
+    throw new registry.RegistryError(404, "not_found", "Device not found");
+  }
+  const device = snap.data() || {};
+  assertDeviceAccessAllowed(auth, device);
+  return { auth, device };
+}
+
+/**
+ * Resolve the owner a new device must belong to.
+ *
+ * For an ordinary owner the AUTHENTICATED identity is authoritative: a body
+ * ownerId is only accepted when it matches, so "owner A authenticated +
+ * ownerId = owner B" cannot create a device belonging to owner B. Superadmin
+ * retains the existing administrative ability to create a device for any owner.
+ */
+function resolveTargetOwnerId(auth, requestedOwnerId) {
+  if (auth.kind === "superadmin") return requestedOwnerId;
+  if (String(requestedOwnerId) !== String(auth.ownerId)) {
+    throw new registry.RegistryError(
+      403,
+      "unauthorized_scope",
+      "Cannot create a device for another owner",
+    );
+  }
+  return auth.ownerId;
+}
+
+// Owner isolation, matching the existing model used by assertDeviceOwnedBy and
+// requireOwnerSelf: superadmin keeps platform-wide access, an owner is confined
+// to their own devices.
+function assertDeviceAccessAllowed(auth, device) {
+  if (auth.kind === "superadmin") return;
+  if (String(device?.ownerId) !== String(auth.ownerId)) {
+    throw new registry.RegistryError(
+      403,
+      "unauthorized_scope",
+      "Device does not belong to the authenticated owner",
+    );
+  }
+}
+
+// RegistryError -> the existing roaming error convention
+// { success:false, error:<code>, message:<text> }.
+// Anything else -> the devices.js 500 shape.
+function handleDeviceError(res, err) {
+  if (err && typeof err.status === "number" && typeof err.code === "string") {
+    return res.status(err.status).json({
+      success: false,
+      error: err.code,
+      message: err.message,
+    });
+  }
+  console.error("Device request error:", err?.message || err);
+  return res
+    .status(500)
+    .json({ success: false, message: "Device request failed" });
+}
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -53,8 +292,11 @@ async function appendDeviceLog(deviceId, entry) {
 // ─────────────────────────────────────────────────────────────
 router.post("/api/devices", async (req, res) => {
   try {
+    // Authenticate before anything is read or written.
+    const auth = await registry.authenticateOwnerOrSuper(req);
+
     const {
-      ownerId,
+      ownerId: requestedOwnerId,
       deviceName,
       routerIdentity, // Router identity/name (like "WeaveCo")
       deviceType = "mikrotik", // default to mikrotik
@@ -67,14 +309,23 @@ router.post("/api/devices", async (req, res) => {
       sshUser,
       sshPassword,
       enablePassword,
+      // Router control (Phase 8.5A) — all optional and fail-closed by default.
+      networkControl: networkControlRaw,
+      routerOsApiEnabled = false,
+      routerOsApiPort,
     } = req.body;
 
-    if (!ownerId || !deviceName || !serviceType) {
+    if (!requestedOwnerId || !deviceName || !serviceType) {
       return res.status(400).json({
         success: false,
         message: "ownerId, deviceName, and serviceType are required.",
       });
     }
+
+    // The AUTHENTICATED identity decides ownership. A body ownerId is never
+    // trusted on its own: for an ordinary owner it must match the authenticated
+    // owner, so owner A cannot create a device that belongs to owner B.
+    const ownerId = resolveTargetOwnerId(auth, requestedOwnerId);
 
     // Normalize serviceType to array
     const serviceTypes = Array.isArray(serviceType)
@@ -107,6 +358,23 @@ router.post("/api/devices", async (req, res) => {
       sshUser: sshUser || null,
       sshPassword: sshPassword || null,
       enablePassword: enablePassword || null,
+      // Router control (Phase 8.5A) — all optional and fail-closed by default.
+      networkControl:
+        networkControlRaw === undefined || networkControlRaw === null
+          ? NETWORK_CONTROL_MODES.NONE
+          : normalizeNetworkControl(networkControlRaw),
+      routerOsApiEnabled: routerOsApiEnabled === true, // default: false
+      routerOsApiPort:
+        Number.isFinite(Number(routerOsApiPort)) &&
+        Number(routerOsApiPort) > 0
+          ? Number(routerOsApiPort)
+          : DEFAULT_ROUTER_OS_API_PORT,
+      // A REFERENCE to a secret held outside the device document, never the
+      // secret itself. It stays null until a real secret backend exists; Phase
+      // 8.5A ships the resolver abstraction only (mikrotik/secrets.js).
+      routerOsApiSecretRef: null,
+      routerOsLastSeenAt: null,
+      routerOsApiState: "unknown",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -126,15 +394,14 @@ router.post("/api/devices", async (req, res) => {
 
     return res.json({
       success: true,
-      device: doc,
+      // Stripped: this response previously echoed sshPassword, enablePassword
+      // and the provisioning token straight back to the caller.
+      device: sanitizeDevice(doc),
       // Frontend will call this next to show copyable script:
       provisioningScriptUrl: `${APP_PUBLIC_URL}/api/provisioning/script?deviceId=${deviceId}`,
     });
   } catch (err) {
-    console.error("Create device error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to create device." });
+    return handleDeviceError(res, err);
   }
 });
 
@@ -143,15 +410,11 @@ router.post("/api/devices", async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.get("/api/devices/:id/ssh-check", async (req, res) => {
   try {
-    const { id } = req.params;
-    const snap = await db.collection("devices").doc(String(id)).get();
-    if (!snap.exists) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Device not found" });
-    }
+    // Authenticate and authorize BEFORE touching the device. This endpoint runs
+    // a real SSH connection using the stored Cisco credentials, so it must never
+    // be reachable for another owner's device.
+    const { device } = await requireOwnedDevice(req, req.params.id);
 
-    const device = snap.data();
     if ((device.deviceType || "").toLowerCase() !== "cisco") {
       return res.status(400).json({
         success: false,
@@ -163,7 +426,7 @@ router.get("/api/devices/:id/ssh-check", async (req, res) => {
 
     await db
       .collection("devices")
-      .doc(String(id))
+      .doc(String(device.deviceId || req.params.id))
       .update({
         status: result.success ? "online" : "offline",
         routerModel: result.model || null,
@@ -172,12 +435,12 @@ router.get("/api/devices/:id/ssh-check", async (req, res) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-    appendDeviceLog(String(id), {
+    appendDeviceLog(String(device.deviceId || req.params.id), {
       type: "ssh_check",
       level: result.success ? "info" : "warn",
       message: result.success
         ? "Cisco SSH check succeeded"
-        : `Cisco SSH check failed: ${result.message}`,
+        : `Cisco SSH check failed: ${redactDiagnosticMessage(result.message)}`,
       meta: {
         model: result.model || null,
         version: result.version || null,
@@ -187,17 +450,13 @@ router.get("/api/devices/:id/ssh-check", async (req, res) => {
     return res.json({
       success: result.success,
       status: result.success ? "online" : "offline",
-      message: result.message,
+      // Redacted: the driver-supplied message is never echoed verbatim.
+      message: redactDiagnosticMessage(result.message),
       model: result.model || null,
       version: result.version || null,
     });
   } catch (err) {
-    console.error("Cisco ssh-check error:", err);
-    return res.status(500).json({
-      success: false,
-      status: "offline",
-      message: err?.message || "Failed to SSH check Cisco device",
-    });
+    return handleDeviceError(res, err);
   }
 });
 
@@ -207,15 +466,24 @@ router.get("/api/devices/:id/ssh-check", async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.get("/api/provisioning/script", async (req, res) => {
   try {
+    // The deviceId in the query string is NEVER trusted on its own. Authenticate
+    // FIRST, then authorize the caller against that device. This closes the gap
+    // where an unauthenticated caller could learn whether a device exists and
+    // — critically — receive its provisioning token.
+    const auth = await registry.authenticateOwnerOrSuper(req);
+
     const { deviceId } = req.query;
     if (!deviceId) return res.status(400).send("Missing deviceId");
 
-    const snap = await db.collection("devices").doc(deviceId).get();
-    if (!snap.exists) return res.status(404).send("Device not found");
+    const snap = await db.collection("devices").doc(String(deviceId)).get();
+    if (!snap.exists) {
+      throw new registry.RegistryError(404, "not_found", "Device not found");
+    }
 
-    const device = snap.data();
+    const device = snap.data() || {};
+    assertDeviceAccessAllowed(auth, device);
 
-    appendDeviceLog(deviceId, {
+    appendDeviceLog(String(deviceId), {
       type: "provisioning_script_requested",
       message: "Provisioning script requested",
       meta: { deviceType: device.deviceType || "mikrotik" },
@@ -231,8 +499,7 @@ router.get("/api/provisioning/script", async (req, res) => {
     res.set("Content-Type", "text/plain");
     return res.send(script);
   } catch (err) {
-    console.error("Provisioning script error:", err);
-    res.status(500).send("Internal error");
+    return handleDeviceError(res, err);
   }
 });
 
@@ -280,12 +547,30 @@ router.get("/provisioning/bootstrap", async (req, res) => {
       );
     }
 
-    // 1) Basic safety & API setup
-    const apiPassword = crypto.randomBytes(8).toString("hex");
+    // 1) RouterOS API access — INTENTIONALLY NOT PROVISIONED HERE.
+    //
+    // Before Phase 8.5A this block emitted:
+    //   /ip service set api address=0.0.0.0/0 disabled=no
+    //   /user add name=yaba_api group=full password=<random> disabled=no
+    //
+    // That was unsafe on three independent axes:
+    //   1. group=full grants complete router control, including the ability to
+    //      re-expose or rewrite the device's own security settings.
+    //   2. address=0.0.0.0/0 exposed the API to every network the router can
+    //      reach, including the guest HotSpot network this very script builds.
+    //   3. The generated password was returned in cleartext to whoever fetched
+    //      /provisioning/bootstrap, which was gated only by device.token — a
+    //      token that was itself published in the device-list API response.
+    //
+    // Phase 8.5A therefore provisions NO RouterOS API credential from this
+    // endpoint. Router control stays off until BOTH device.routerOsApiEnabled
+    // and the global ROAMING_MIKROTIK_API_ENABLED kill switch are set, and the
+    // account must be created out-of-band with a restricted source address, a
+    // least-privileged group, and a secret stored by reference only.
     scriptLines.push(
-      `/ip/service set api address=0.0.0.0/0 disabled=no`,
-      `/user add name=yaba_api group=full password=${apiPassword} disabled=no`,
-      `:put "API user created: yaba_api"`,
+      `:put "RouterOS API access is NOT configured by this script."`,
+      `:put "For YabaLink router control, create a least-privilege API user manually"`,
+      `:put "restricted to the YabaLink control host, and store the secret by reference."`,
     );
 
     // 2) Create bridge for all selected interfaces (as shown in video)
@@ -347,14 +632,31 @@ router.get("/provisioning/bootstrap", async (req, res) => {
     }
 
     // 2) Call back to your server → mark connected
-    const callbackUrl = `${APP_PUBLIC_URL}/api/devices/connected?rId=${encodeURIComponent(
-      rId,
-    )}&secret=${encodeURIComponent(CALLBACK_SECRET)}&status=online`;
-    scriptLines.push(
-      `:delay 2`,
-      `/tool fetch url="${callbackUrl}" keep-result=no`,
-      `:put "YABA bootstrap complete"`,
-    );
+    //
+    // The callback is emitted ONLY when CALLBACK_SECRET is explicitly configured
+    // with a non-trivial value. Shipping a fetch against a default or absent
+    // secret would bake a guessable credential into every provisioned router and
+    // would fail anyway, because the endpoint now fails closed.
+    scriptLines.push(`:delay 2`);
+    if (isCallbackSecretConfigured()) {
+      const callbackUrl = `${APP_PUBLIC_URL}/api/devices/connected?rId=${encodeURIComponent(
+        rId,
+      )}&secret=${encodeURIComponent(CONFIGURED_CALLBACK_SECRET)}&status=online`;
+      scriptLines.push(
+        `/tool fetch url="${callbackUrl}" keep-result=no`,
+      );
+    } else {
+      scriptLines.push(
+        `:put "Device online-callback is disabled: the server callback secret is not configured."`,
+      );
+      appendDeviceLog(rId, {
+        type: "bootstrap_callback_disabled",
+        level: "warn",
+        message:
+          "Online callback omitted from the bootstrap script: CALLBACK_SECRET is not configured",
+      });
+    }
+    scriptLines.push(`:put "YABA bootstrap complete"`);
 
     const out = scriptLines.join("\n");
     res.set("Content-Type", "text/plain");
@@ -371,7 +673,27 @@ router.get("/provisioning/bootstrap", async (req, res) => {
 router.get("/api/devices/connected", async (req, res) => {
   try {
     const { rId, secret, status, ip } = req.query;
-    if (secret !== CALLBACK_SECRET) return res.status(403).send("Forbidden");
+
+    // FAIL CLOSED when no usable callback secret is configured. Previously the
+    // secret defaulted to the literal "supersecret", so a guessable value
+    // authenticated the callback on any deployment that had not set the variable
+    // (render.yaml does not set it).
+    if (!isCallbackSecretConfigured()) {
+      return res.status(503).json({
+        success: false,
+        error: "not_configured",
+        message: `Device callback authentication is not configured. Set ${CALLBACK_SECRET_ENV_VAR}.`,
+      });
+    }
+
+    // Constant-time comparison. The configured secret is never echoed or logged.
+    if (
+      typeof secret !== "string" ||
+      secret.length === 0 ||
+      !secretsMatch(secret, CONFIGURED_CALLBACK_SECRET)
+    ) {
+      return res.status(403).send("Forbidden");
+    }
 
     const ref = db.collection("devices").doc(String(rId));
     const snap = await ref.get();
@@ -391,8 +713,8 @@ router.get("/api/devices/connected", async (req, res) => {
 
     return res.json({ success: true });
   } catch (err) {
-    console.error("Device connected callback error:", err);
-    res.status(500).json({ success: false });
+    console.error("Device connected callback error:", err?.message || err);
+    return res.status(500).json({ success: false });
   }
 });
 
@@ -402,23 +724,32 @@ router.get("/api/devices/connected", async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.get("/api/devices/status/:id", async (req, res) => {
   try {
+    // Authenticate BEFORE any resource lookup, so an unauthenticated caller
+    // cannot use the response code to learn whether a device exists.
+    const auth = await registry.authenticateOwnerOrSuper(req);
+
     const id = req.params.id;
     const snap = await db.collection("devices").doc(id).get();
-    if (!snap.exists)
+    if (!snap.exists) {
       return res.status(404).json({
         success: false,
+        error: "not_found",
         message: "Device not found",
       });
+    }
 
-    const d = snap.data();
+    const d = snap.data() || {};
+    assertDeviceAccessAllowed(auth, d);
+
     return res.json({
       success: true,
       status: d.status || "unknown",
-      device: d,
+      // Sanitized: no sshPassword, enablePassword, token, routerOsApiSecretRef
+      // or routerOsApiUsername, but hasPassword/hasEnablePassword are present.
+      device: sanitizeDevice(d),
     });
   } catch (err) {
-    console.error("Status error:", err);
-    res.status(500).json({ success: false });
+    return handleDeviceError(res, err);
   }
 });
 
@@ -427,8 +758,14 @@ router.get("/api/devices/status/:id", async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.get("/api/devices/owner/:ownerId", async (req, res) => {
   try {
-    console.log("GET devices called for owner:", req.params.ownerId);
+    const auth = await registry.authenticateOwnerOrSuper(req);
     const { ownerId } = req.params;
+
+    // Owner isolation: an owner may only read their own inventory. Superadmin
+    // retains platform-wide read access, as in the existing roaming model.
+    if (auth.kind !== "superadmin") {
+      registry.requireOwnerSelf(auth, ownerId);
+    }
 
     let snapshot;
     try {
@@ -462,7 +799,7 @@ router.get("/api/devices/owner/:ownerId", async (req, res) => {
     snapshot.forEach((doc) => {
       devices.push({
         id: doc.id,
-        ...doc.data(),
+        ...sanitizeDevice(doc.data()),
       });
     });
 
@@ -486,13 +823,12 @@ router.get("/api/devices/owner/:ownerId", async (req, res) => {
       devices,
     });
   } catch (err) {
-    console.error("GET DEVICES OWNER ERROR:", err.message);
-    console.error("STACK:", err.stack);
-    console.error("REAL ERROR:", err.message, err.stack);
-    return res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch devices",
-    });
+    // Routes 401/403 through the existing RegistryError convention instead of
+    // collapsing an authorization denial into a 500.
+    if (!err || typeof err.status !== "number") {
+      console.error("GET DEVICES OWNER ERROR:", err?.message || err);
+    }
+    return handleDeviceError(res, err);
   }
 });
 
@@ -502,20 +838,125 @@ router.get("/api/devices/owner/:ownerId", async (req, res) => {
 router.put("/api/devices/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const updateData = req.body;
+    // Authenticate and authorize BEFORE applying any change. The owner identity
+    // is authoritative; the URL id is only ever compared against it.
+    const { device: existing } = await requireOwnedDevice(req, id);
+    const updateData = { ...(req.body || {}) };
 
-    // Remove fields that shouldn't be updated
-    delete updateData.deviceId;
-    delete updateData.ownerId;
-    delete updateData.createdAt;
+    // ───────────────────────────────────────────────────────────
+    // Phase 8.5A hardening
+    // ───────────────────────────────────────────────────────────
+    // This route accepts an arbitrary body and forwarded it straight into
+    // Firestore, so it could be used to overwrite the provisioning token, or to
+    // write router-control fields that only an authorized control path should
+    // ever change. Those are now rejected rather than silently persisted.
+    const immutableFields = [
+      "deviceId",
+      "ownerId",
+      "createdAt",
+      "token",
+      "routerOsApiSecretRef",
+      "routerOsApiUsername",
+      "routerOsLastSeenAt",
+      "routerOsApiState",
+    ];
+    for (const field of immutableFields) {
+      delete updateData[field];
+    }
+
+    // ───────────────────────────────────────────────────────────
+    // Credential-state handling (Phase 8.5A security follow-up)
+    // ───────────────────────────────────────────────────────────
+    // Phase 8.5A stopped returning sshPassword/enablePassword, so the edit form
+    // cannot hold the stored value and necessarily submits the field blank.
+    //
+    // Three cases, deliberately distinct:
+    //   stored password + blank  -> keep the stored password (no write)
+    //   stored password + new    -> overwrite with the new value
+    //   NO stored password + blank-> refuse, because the owner asked to save a
+    //                                 device that will have no usable credential
+    //
+    // An absent field (undefined) always means "not part of this update" and is
+    // never treated as a request to clear a credential. There is no credential
+    // removal workflow in this application, so a blank is never a deletion.
+    //
+    // `existing` is the already-authorized device loaded by requireOwnedDevice,
+    // so no second read is needed.
+
+    // Only sshPassword is ever mandatory: it is the Cisco SSH credential. The
+    // enable password is optional in the onboarding form and stays optional here,
+    // so a blank enablePassword is simply "no change" even when nothing is stored.
+    const deviceType = String(
+      updateData.deviceType || existing.deviceType || "",
+    ).toLowerCase();
+    const sshPasswordRequired = deviceType === "cisco";
+
+    for (const field of ["sshPassword", "enablePassword"]) {
+      const wasSubmitted = Object.prototype.hasOwnProperty.call(updateData, field);
+      const isBlank =
+        updateData[field] === undefined ||
+        updateData[field] === null ||
+        updateData[field] === "";
+
+      if (!isBlank) continue; // a real new value: allowed to overwrite
+
+      delete updateData[field];
+
+      // Blank submitted for a credential that this device requires, and there is
+      // no stored value to preserve.
+      if (wasSubmitted && field === "sshPassword" && sshPasswordRequired && !existing.sshPassword) {
+        return res.status(400).json({
+          success: false,
+          error: "validation_error",
+          message:
+            "An SSH password is required: this device has no stored password.",
+        });
+      }
+    }
+
+    if (
+      updateData.networkControl !== undefined &&
+      !NETWORK_CONTROL_VALUES.includes(String(updateData.networkControl))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `networkControl must be one of: ${NETWORK_CONTROL_VALUES.join(", ")}.`,
+      });
+    }
+
+    // Enabling per-device control is permitted here, but it is only ever half of
+    // the switch: isRouterOsApiEnabledForDevice additionally requires the global
+    // ROAMING_MIKROTIK_API_ENABLED kill switch to be on.
+    if (updateData.routerOsApiEnabled !== undefined) {
+      updateData.routerOsApiEnabled = updateData.routerOsApiEnabled === true;
+    }
+
+    if (updateData.routerOsApiPort !== undefined) {
+      const port = Number(updateData.routerOsApiPort);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return res.status(400).json({
+          success: false,
+          message: "routerOsApiPort must be an integer between 1 and 65535.",
+        });
+      }
+      updateData.routerOsApiPort = port;
+    }
 
     updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    if (Object.keys(updateData).length === 1) {
+      return res.status(400).json({
+        success: false,
+        message: "No updatable fields supplied.",
+      });
+    }
 
     await db.collection("devices").doc(id).update(updateData);
     appendDeviceLog(id, {
       type: "device_updated",
       message: "Device updated",
       meta: {
+        // Field NAMES only. Values are never copied into the audit trail.
         updatedFields: Object.keys(updateData || {}).filter(
           (k) => !["updatedAt"].includes(k),
         ),
@@ -527,10 +968,7 @@ router.put("/api/devices/:id", async (req, res) => {
       message: "Device updated successfully",
     });
   } catch (err) {
-    console.error("Update device error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to update device" });
+    return handleDeviceError(res, err);
   }
 });
 
@@ -540,12 +978,18 @@ router.put("/api/devices/:id", async (req, res) => {
 router.delete("/api/devices/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    // Authenticate and authorize BEFORE deleting. An owner may only unlink their
+    // own device; superadmin retains the existing administrative ability.
+    await requireOwnedDevice(req, id);
 
     // Best-effort: log the unlink before deleting the doc
     appendDeviceLog(id, {
       type: "device_unlinked",
       message: "Device unlinked",
     });
+    // Cleanup semantics are UNCHANGED: only the device document is deleted. The
+    // logs subcollection and any related records are deliberately left exactly as
+    // before, so no record is silently removed that was not previously removed.
     await db.collection("devices").doc(id).delete();
 
     return res.json({
@@ -553,10 +997,7 @@ router.delete("/api/devices/:id", async (req, res) => {
       message: "Device unlinked successfully",
     });
   } catch (err) {
-    console.error("Delete device error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to unlink device" });
+    return handleDeviceError(res, err);
   }
 });
 
@@ -566,16 +1007,9 @@ router.delete("/api/devices/:id", async (req, res) => {
 router.get("/api/devices/:id/ping", async (req, res) => {
   try {
     const { id } = req.params;
-    const snap = await db.collection("devices").doc(id).get();
-
-    if (!snap.exists) {
-      return res.status(404).json({
-        success: false,
-        message: "Device not found",
-      });
-    }
-
-    const device = snap.data();
+    // Authenticate and authorize BEFORE reading the device: a ping result and
+    // the device WAN IP are device metadata that must not leak cross-owner.
+    const { device } = await requireOwnedDevice(req, id);
 
     // Simple ping test - check if device has WAN IP and is marked online
     // In production, you'd ping the actual router IP via MikroTik API
@@ -601,11 +1035,9 @@ router.get("/api/devices/:id/ping", async (req, res) => {
         : "Router is not reachable. Please check connection and configuration.",
     });
   } catch (err) {
-    console.error("Ping error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to ping device",
-    });
+    // Routes 401/403 through the existing RegistryError convention instead of
+    // collapsing an authorization denial into a 500.
+    return handleDeviceError(res, err);
   }
 });
 
@@ -615,18 +1047,13 @@ router.get("/api/devices/:id/ping", async (req, res) => {
 router.get("/api/devices/:id/logs", async (req, res) => {
   try {
     const { id } = req.params;
+    // Authenticate and authorize BEFORE reading the device or its logs.
+    await requireOwnedDevice(req, id);
     const limitRaw = parseInt(String(req.query.limit || "200"), 10);
     const limit = Math.max(
       1,
       Math.min(Number.isFinite(limitRaw) ? limitRaw : 200, 500),
     );
-
-    const deviceSnap = await db.collection("devices").doc(id).get();
-    if (!deviceSnap.exists) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Device not found" });
-    }
 
     const logsSnap = await db
       .collection("devices")
@@ -660,10 +1087,9 @@ router.get("/api/devices/:id/logs", async (req, res) => {
 
     return res.json({ success: true, logs });
   } catch (err) {
-    console.error("Device logs error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch logs" });
+    // Routes 401/403 through the existing RegistryError convention instead of
+    // collapsing an authorization denial into a 500.
+    return handleDeviceError(res, err);
   }
 });
 

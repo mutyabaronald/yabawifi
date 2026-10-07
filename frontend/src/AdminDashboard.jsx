@@ -479,6 +479,13 @@ function AdminDashboard() {
   });
   const [provisioningScript, setProvisioningScript] = useState("");
   const [deviceId, setDeviceId] = useState(null);
+  // Credential STATE only (Phase 8.5A security follow-up).
+  //
+  // The API deliberately never returns sshPassword/enablePassword, so the form
+  // cannot hold the stored value and always submits these fields blank. The API
+  // exposes hasPassword so we can tell "a password is stored, leave it alone"
+  // from "no password is stored, the owner must supply one".
+  const [deviceHasStoredPassword, setDeviceHasStoredPassword] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("pending");
   const [deviceLoading, setDeviceLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -803,13 +810,30 @@ function AdminDashboard() {
     }
   };
 
-  // Device Onboarding Module Functions
-  const fetchDevicesForOwner = async () => {
-    if (!ownerId) return;
-    try {
-      const response = await axios.get(
-        `http://localhost:5000/api/devices/owner/${ownerId}`,
-      );
+// ─────────────────────────────────────────────────────────────
+// Device request auth (Phase 8.5A security follow-up)
+// ─────────────────────────────────────────────────────────────
+// GET /api/devices/status/:id and GET /api/devices/owner/:ownerId are now
+// authenticated. The dashboard already holds a valid owner session token
+// (localStorage "ownerToken", issued by POST /api/owners/login), so it is sent as
+// a Bearer header — the same convention already used by UploadLogo.jsx,
+// AdminChangePassword.jsx and the authHeaders() helper in the roaming panels.
+//
+// The token is read from localStorage at call time and is never copied into React
+// state, never placed in a query string, and never hard-coded.
+const deviceAuthHeaders = () => {
+  const token = localStorage.getItem("ownerToken");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+// Device Onboarding Module Functions
+const fetchDevicesForOwner = async () => {
+  if (!ownerId) return;
+  try {
+  const response = await axios.get(
+      `http://localhost:5000/api/devices/owner/${ownerId}`,
+      { headers: deviceAuthHeaders() },
+    );
       if (response.data.success) {
         setDevices(response.data.devices);
       }
@@ -825,7 +849,9 @@ function AdminDashboard() {
     }
 
     try {
-      await axios.delete(`http://localhost:5000/api/devices/${deviceId}`);
+      await axios.delete(`http://localhost:5000/api/devices/${deviceId}`, {
+      headers: deviceAuthHeaders(),
+    });
       setDeviceMessage("Device unlinked successfully");
       fetchDevicesForOwner();
     } catch (err) {
@@ -844,6 +870,7 @@ function AdminDashboard() {
       }
       const res = await axios.get(
         `http://localhost:5000/api/devices/${device.deviceId}/logs?limit=200`,
+        { headers: deviceAuthHeaders() },
       );
       if (res.data?.success) {
         setRouterLogs(res.data.logs || []);
@@ -896,11 +923,13 @@ function AdminDashboard() {
       ip: device.ip || "",
       sshPort: device.sshPort || 22,
       sshUser: device.sshUser || "",
-      sshPassword: device.sshPassword || "",
-      enablePassword: device.enablePassword || "",
+      // Never populated from the API: the stored password is not returned.
+      sshPassword: "",
+      enablePassword: "",
     });
-    setDeviceId(device.deviceId);
-    setShowDeviceWizard(true);
+    setDeviceHasStoredPassword(device.hasPassword === true);
+  setDeviceId(device.deviceId);
+  setShowDeviceWizard(true);
   };
 
   const handleWizardClose = () => {
@@ -923,6 +952,7 @@ function AdminDashboard() {
     setCurrentStep(1);
     setProvisioningScript("");
     setDeviceId(null);
+    setDeviceHasStoredPassword(false);
     setConnectionStatus("pending");
     fetchDevicesForOwner();
   };
@@ -1232,12 +1262,19 @@ function AdminDashboard() {
         return;
       }
 
-      if (isCisco) {
-        if (!normalized.ip || !normalized.sshUser || !normalized.sshPassword) {
-          setDeviceError(
-            "For Cisco routers, please provide IP address, SSH username, and SSH password.",
-          );
-          return;
+if (isCisco) {
+        // An SSH password is required only when none is already stored. Leaving
+        // the field blank while a password exists means "keep the stored one",
+        // which is safe because the API never returns it.
+    if (
+       !normalized.ip ||
+      !normalized.sshUser ||
+   (!normalized.sshPassword && !deviceHasStoredPassword)
+        ) {
+      setDeviceError(
+     "For Cisco routers, please provide IP address, SSH username, and SSH password.",
+  );
+   return;
         }
       }
 
@@ -1279,11 +1316,10 @@ function AdminDashboard() {
             interfaces: existingDevice.interfaces || prev.interfaces,
             ip: existingDevice.ip || prev.ip,
             sshPort: existingDevice.sshPort || prev.sshPort,
-            sshUser: existingDevice.sshUser || prev.sshUser,
-            enablePassword:
-              existingDevice.enablePassword || prev.enablePassword,
-          }));
-          setCurrentStep(3);
+sshUser: existingDevice.sshUser || prev.sshUser,
+     }));
+          setDeviceHasStoredPassword(existingDevice.hasPassword === true);
+     setCurrentStep(3);
           return;
         }
       }
@@ -1339,7 +1375,7 @@ function AdminDashboard() {
             await axios.put(
               `http://localhost:5000/api/devices/${targetId}`,
               normalized,
-              { timeout: 20000 },
+              { timeout: 20000, headers: deviceAuthHeaders() },
             );
 
             // Refresh device list and close modal
@@ -1373,7 +1409,7 @@ function AdminDashboard() {
           await axios.put(
             `http://localhost:5000/api/devices/${targetId}`,
             normalized,
-            { timeout: 20000 },
+            { timeout: 20000, headers: deviceAuthHeaders() },
           );
           newDeviceId = targetId;
           setDeviceId(targetId);
@@ -1384,7 +1420,7 @@ function AdminDashboard() {
               ...normalized,
               ownerId,
             },
-            { timeout: 20000 },
+            { timeout: 20000, headers: deviceAuthHeaders() },
           );
 
           if (response.data.success) {
@@ -1411,7 +1447,7 @@ function AdminDashboard() {
 
         const scriptResponse = await axios.get(
           `http://localhost:5000/api/provisioning/script?deviceId=${newDeviceId}`,
-          { timeout: 20000 },
+          { timeout: 20000, headers: deviceAuthHeaders() },
         );
         setProvisioningScript(scriptResponse.data);
 
@@ -1476,7 +1512,10 @@ function AdminDashboard() {
             ? `http://localhost:5000/api/devices/${pollDeviceId}/ssh-check`
             : `http://localhost:5000/api/devices/status/${pollDeviceId}`;
 
-        const response = await axios.get(endpoint, { timeout: 20000 });
+        const response = await axios.get(endpoint, {
+ timeout: 20000,
+ headers: deviceAuthHeaders(),
+ });
         const status =
           response.data?.status ||
           (response.data?.success ? "online" : "offline");
@@ -1609,11 +1648,12 @@ function AdminDashboard() {
         try {
           const [devRes, statsRes] = await Promise.all([
             axios.get(`http://localhost:5000/api/devices/owner/${ownerId}`, {
-              timeout: 20000,
+            timeout: 20000,
+              headers: deviceAuthHeaders(),
             }),
             axios.get(
               `http://localhost:5000/api/devices/owner/${ownerId}/stats`,
-              { timeout: 20000 },
+              { timeout: 20000, headers: deviceAuthHeaders() },
             ),
           ]);
 

@@ -11,6 +11,18 @@ services:
         value: production
       - key: PORT
         value: 10000
+      # Device callback authentication. The router bootstrap script embeds a
+      # /tool fetch URL that calls GET /api/devices/connected after applying its
+      # configuration, so this is an internal service callback, not a user
+      # endpoint. The secret is compared with a constant-time check and the
+      # endpoint fails closed when it is absent or weak.
+      #
+      # generate: true tells Render to create a random secret at deploy time and
+      # store it in the environment. NO secret value is written here, and none is
+      # committed to Git. Remove generate: true and supply a value: to use a
+      # specific secret instead.
+      - key: CALLBACK_SECRET
+        generate: true
     healthCheckPath: /api/health
 
   # Frontend Static Site

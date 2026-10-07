@@ -89,70 +89,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// Cisco SSH check endpoint (defined early to guarantee routing)
-app.get("/api/devices/:id/ssh-check", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { db, admin } = require("./firebase");
-    const { checkCiscoConnection } = require("./services/ciscoService");
-
-    const snap = await db.collection("devices").doc(String(id)).get();
-    if (!snap.exists) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Device not found" });
-    }
-    const device = snap.data();
-    if ((device.deviceType || "").toLowerCase() !== "cisco") {
-      return res.status(400).json({
-        success: false,
-        message: "SSH check is only available for Cisco devices",
-      });
-    }
-
-    const lastCheckedMs = device.lastCheckedAtISO
-      ? Date.parse(device.lastCheckedAtISO)
-      : 0;
-    const fresh = lastCheckedMs && Date.now() - lastCheckedMs < 60_000;
-    if (device.status === "online" && fresh) {
-      return res.json({
-        success: true,
-        status: "online",
-        message: "Cisco router already marked online",
-        model: device.routerModel || null,
-        version: device.routerVersion || null,
-      });
-    }
-
-    const result = await checkCiscoConnection(device);
-
-    await db
-      .collection("devices")
-      .doc(String(id))
-      .update({
-        status: result.success ? "online" : "offline",
-        routerModel: result.model || null,
-        routerVersion: result.version || null,
-        lastCheckedAtISO: new Date().toISOString(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-    return res.json({
-      success: result.success,
-      status: result.success ? "online" : "offline",
-      message: result.message,
-      model: result.model || null,
-      version: result.version || null,
-    });
-  } catch (err) {
-    console.error("Cisco ssh-check error (early route):", err);
-    return res.status(500).json({
-      success: false,
-      status: "offline",
-      message: err?.message || "Failed to SSH check Cisco device",
-    });
-  }
-});
+// REMOVED (Phase 8.5A security hardening): a duplicate, UNAUTHENTICATED
+// definition of GET /api/devices/:id/ssh-check used to be registered here.
+//
+// Because this registration ran BEFORE app.use("/", devicesRoutes) below, it
+// shadowed the canonical route in routes/devices.js, which meant the devices.js
+// copy could never be reached and could not be secured. Two copies of an
+// authenticated endpoint is an authorization bypass waiting to happen.
+//
+// The single canonical, owner-authorized definition now lives in
+// routes/devices.js, which is mounted unconditionally at app.use("/", ...).
 app.use("/api/admin", adminRoutes);
 app.use("/api/statistics", statisticsRoutes);
 
@@ -238,73 +184,10 @@ app.use("/api/roaming/dashboard", roamingDashboardRoutes);
 app.use("/", devicesRoutes);
 app.use("/api/devices", deviceTrackingRoutes);
 
-// Cisco SSH check endpoint (compatibility/safety)
-// Some deployments were not registering the router-based ssh-check route as expected.
-// Keep this here to guarantee the endpoint exists.
-app.get("/api/devices/:id/ssh-check", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { db, admin } = require("./firebase");
-    const { checkCiscoConnection } = require("./services/ciscoService");
-
-    const snap = await db.collection("devices").doc(String(id)).get();
-    if (!snap.exists) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Device not found" });
-    }
-    const device = snap.data();
-    if ((device.deviceType || "").toLowerCase() !== "cisco") {
-      return res.status(400).json({
-        success: false,
-        message: "SSH check is only available for Cisco devices",
-      });
-    }
-
-    // If already online and checked recently, don’t re-SSH.
-    const lastCheckedMs = device.lastCheckedAtISO
-      ? Date.parse(device.lastCheckedAtISO)
-      : 0;
-    const fresh = lastCheckedMs && Date.now() - lastCheckedMs < 60_000; // 60s
-    if (device.status === "online" && fresh) {
-      return res.json({
-        success: true,
-        status: "online",
-        message: "Cisco router already marked online",
-        model: device.routerModel || null,
-        version: device.routerVersion || null,
-      });
-    }
-
-    const result = await checkCiscoConnection(device);
-
-    await db
-      .collection("devices")
-      .doc(String(id))
-      .update({
-        status: result.success ? "online" : "offline",
-        routerModel: result.model || null,
-        routerVersion: result.version || null,
-        lastCheckedAtISO: new Date().toISOString(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-    return res.json({
-      success: result.success,
-      status: result.success ? "online" : "offline",
-      message: result.message,
-      model: result.model || null,
-      version: result.version || null,
-    });
-  } catch (err) {
-    console.error("Cisco ssh-check error (server.js):", err);
-    return res.status(500).json({
-      success: false,
-      status: "offline",
-      message: err?.message || "Failed to SSH check Cisco device",
-    });
-  }
-});
+// REMOVED (Phase 8.5A security hardening): a second duplicate, UNAUTHENTICATED
+// definition of GET /api/devices/:id/ssh-check. See the note where the first
+// duplicate was removed. Only the owner-authorized definition in
+// routes/devices.js remains.
 
 // Serve static files from frontend directory (after all API routes)
 app.use(express.static(path.join(__dirname, "../frontend")));

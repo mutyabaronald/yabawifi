@@ -11,7 +11,7 @@
  * It ONLY creates roaming_residuals records and transitions entitlements to expired.
  */
 const cron = require("node-cron");
-const { db } = require("./firebase");
+const { db } = require("../firebase");
 const { finalizeEntitlementResidual, RESIDUAL_COLLECTION } = require("./roamingResidualService");
 
 const ENTITLEMENT_COLLECTION = "roaming_entitlements";

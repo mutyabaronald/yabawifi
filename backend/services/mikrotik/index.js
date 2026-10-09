@@ -16,6 +16,8 @@ const secrets = require("./secrets");
 const routerOsClient = require("./routerOsClient");
 const hotspotUserService = require("./hotspotUserService");
 const enforcementSnapshot = require("./enforcementSnapshot");
+const mockRouterOsTransport = require("./mockRouterOsTransport");
+const mikrotikEnforcementAdapter = require("./mikrotikEnforcementAdapter");
 
 module.exports = {
   ...errors,
@@ -25,4 +27,6 @@ module.exports = {
   ...routerOsClient,
   ...hotspotUserService,
   ...enforcementSnapshot,
+  ...mockRouterOsTransport,
+  ...mikrotikEnforcementAdapter,
 };

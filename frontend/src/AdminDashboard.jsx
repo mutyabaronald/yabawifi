@@ -36,6 +36,8 @@ import UploadLogo from "./pages/UploadLogo";
 import OwnerStats from "./pages/OwnerStats";
 import VoucherManager from "./components/VoucherManager";
 import OwnerRoamingPanel from "./components/OwnerRoamingPanel";
+import OwnerRoamingMonitor from "./components/OwnerRoamingMonitor";
+import SuperAdminRoamingMonitor from "./components/SuperAdminRoamingMonitor";
 import OwnerEntitlementsPanel from "./components/OwnerEntitlementsPanel";
 import OwnerProfile from "../owner/OwnerProfile";
 
@@ -506,6 +508,8 @@ function AdminDashboard() {
     { id: "financials", label: "Financials", icon: FaDollarSign },
     { id: "loyalty", label: "Loyalty Program", icon: FaChartBar },
     { id: "roaming", label: "Roaming", icon: FaGlobe },
+    { id: "monitor", label: "Roaming Monitor", icon: FaChartBar },
+    { id: "super-roaming", label: "Super Roaming", icon: FaGlobe },
     { id: "entitlements", label: "Entitlements", icon: FaUsers },
   ];
 
@@ -3876,6 +3880,14 @@ sshUser: existingDevice.sshUser || prev.sshUser,
 
           {activeSection === "dashboard" && activeTab === "roaming" && (
             <OwnerRoamingPanel ownerId={ownerId} hotspots={hotspots} />
+          )}
+
+          {activeSection === "dashboard" && activeTab === "monitor" && (
+            <OwnerRoamingMonitor ownerId={ownerId} />
+          )}
+
+          {activeSection === "dashboard" && activeTab === "super-roaming" && (
+            <SuperAdminRoamingMonitor />
           )}
 
           {activeSection === "dashboard" && activeTab === "entitlements" && (

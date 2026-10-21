@@ -1,8 +1,13 @@
+const { getProductionSecret } = require("./passwordService");
+
+const SUPERADMIN_JWT_SECRET = getProductionSecret(
+  "SUPERADMIN_JWT_SECRET",
+  "dev-super-secret",
+  "Super admin JWT secret"
+);
+
 const jwt = require("jsonwebtoken");
 const { db } = require("../firebase");
-
-const SUPERADMIN_JWT_SECRET =
-  process.env.SUPERADMIN_JWT_SECRET || "dev-super-secret";
 
 const FEDERATION_STATUSES = Object.freeze([
   "draft",

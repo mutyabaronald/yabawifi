@@ -2,13 +2,48 @@ const express = require("express");
 const router = express.Router();
 const { db } = require("../firebase");
 const { v4: uuidv4 } = require("uuid");
+const registry = require("../services/roamingRegistryService");
+
+function publicHotspot(d) {
+  const h = d.data() || {};
+  return {
+    id: d.id,
+    hotspotName: h.hotspotName || null,
+    ssid: h.ssid || null,
+    latitude: h.latitude || null,
+    longitude: h.longitude || null,
+    status: h.status || "online",
+  };
+}
+
+function ownerHotspotProjection(d) {
+  const h = d.data() || {};
+  return {
+    id: d.id,
+    hotspotName: h.hotspotName || null,
+    address: h.address || null,
+    location: h.address || h.location || null,
+    latitude: h.latitude || null,
+    longitude: h.longitude || null,
+    status: h.status || "online",
+    routerType: h.routerType || null,
+    routerId: h.routerId || null,
+    mac: h.mac || null,
+    hotspotType: h.hotspotType || null,
+    deviceId: h.deviceId || null,
+    deviceName: h.deviceName || null,
+    reviewsEnabled: h.reviewsEnabled || false,
+    loyalty_program_enabled: h.loyalty_program_enabled !== undefined ? h.loyalty_program_enabled : true,
+    createdAt: h.createdAt || null,
+  };
+}
 
 // GET /api/hotspots
 // Lightweight list endpoint (used by some dashboards/health checks)
 router.get("/", async (req, res) => {
   try {
-    const snap = await db.collection("hotspots").limit(200).get();
-    const hotspots = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const snap = await db.collection("hotspots").limit(100).get();
+    const hotspots = snap.docs.map(publicHotspot);
     res.json({ success: true, hotspots });
   } catch (err) {
     console.error("Hotspots list error:", err?.message || err);
@@ -98,13 +133,41 @@ router.post("/create", async (req, res) => {
 router.get("/owner/:ownerId", async (req, res) => {
   try {
     const { ownerId } = req.params;
+
+    // Authenticate owner or super-admin
+    let auth;
+    try {
+      auth = await registry.authenticateOwnerOrSuper(req);
+    } catch (err) {
+      if (err instanceof registry.RegistryError) {
+        return res.status(err.status).json({
+          success: false,
+          error: err.code,
+          message: err.message,
+        });
+      }
+      throw err;
+    }
+
+    // Owner isolation: owners can only view their own hotspots
+    if (auth.kind === "owner") {
+      if (auth.ownerId !== ownerId) {
+        return res.status(403).json({
+          success: false,
+          error: "unauthorized_scope",
+          message: "You can only view your own hotspots",
+        });
+      }
+    }
+
     const snap = await db
       .collection("hotspots")
       .where("ownerId", "==", ownerId)
       .get();
-    const hotspots = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const hotspots = snap.docs.map(ownerHotspotProjection);
     res.json({ hotspots });
   } catch (err) {
+    console.error("Hotspots owner list error:", err?.message || err);
     res.status(500).json({ hotspots: [] });
   }
 });
@@ -154,7 +217,6 @@ router.get("/nearby", async (req, res) => {
           } catch {}
           hotspots.push({
             id: doc.id,
-            ownerId: h.ownerId,
             hotspotName: h.hotspotName,
             latitude: h.latitude,
             longitude: h.longitude,
@@ -184,19 +246,22 @@ router.get("/:hotspotId", async (req, res) => {
     if (!doc.exists)
       return res.status(404).json({ error: "Hotspot not found" });
 
-    const hotspotData = doc.data();
+    const h = doc.data() || {};
     res.json({
       success: true,
       hotspot: {
         id: doc.id,
-        ...hotspotData,
-        location: hotspotData.address, // Use address as location for display
-        latitude: hotspotData.latitude,
-        longitude: hotspotData.longitude,
-        reviewsEnabled: hotspotData.reviewsEnabled || false,
+        hotspotName: h.hotspotName || null,
+        address: h.address || null,
+        location: h.address || h.location || null,
+        latitude: h.latitude || null,
+        longitude: h.longitude || null,
+        status: h.status || "online",
+        reviewsEnabled: h.reviewsEnabled || false,
       },
     });
   } catch (err) {
+    console.error("Hotspot fetch error:", err?.message || err);
     res.status(500).json({ error: "Failed to fetch hotspot" });
   }
 });

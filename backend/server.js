@@ -149,20 +149,6 @@ app.use("/api/routers", routerRoutes);
 app.use("/api", mtnRoutes);
 app.use("/api/hotspots", hotspotsRoutes);
 
-// Compatibility: some clients call /api/hotspots (no trailing slash)
-// Express router mount should already handle this, but keep an explicit handler
-// to avoid "Cannot GET /api/hotspots" in some setups.
-app.get("/api/hotspots", async (req, res) => {
-  try {
-    const { db } = require("./firebase");
-    const snap = await db.collection("hotspots").limit(200).get();
-    const hotspots = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    res.json({ success: true, hotspots });
-  } catch (err) {
-    console.error("Hotspots list error:", err?.message || err);
-    res.status(500).json({ success: false, hotspots: [] });
-  }
-});
 app.use("/api/loyalty", loyaltyRoutes);
 app.use("/api/owner/loyalty", ownerLoyaltyRoutes);
 app.use("/api/reviews", reviewsRoutes);

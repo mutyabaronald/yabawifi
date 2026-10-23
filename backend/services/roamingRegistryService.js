@@ -9,6 +9,12 @@ const SUPERADMIN_JWT_SECRET = getProductionSecret(
 const jwt = require("jsonwebtoken");
 const { db } = require("../firebase");
 
+const {
+  NETWORK_CONTROL_MODES,
+  normalizeNetworkControl,
+} = require("./mikrotik/featureFlag");
+const { deriveRouterUsername } = require("./mikrotik/identity");
+
 const FEDERATION_STATUSES = Object.freeze([
   "draft",
   "active",
@@ -689,6 +695,125 @@ function handleError(res, err) {
   });
 }
 
+async function resolveMikroTikContext(session) {
+  if (!session || typeof session !== "object") {
+    throw new RegistryError(400, "VALIDATION_ERROR", "Session is required");
+  }
+  const { visitedHotspotId, visitedOwnerId, entitlementId, aaaAdapterKey } = session;
+  if (!visitedHotspotId || !visitedOwnerId || !entitlementId) {
+    throw new RegistryError(400, "VALIDATION_ERROR", "Session missing required fields: visitedHotspotId, visitedOwnerId, entitlementId");
+  }
+  if (aaaAdapterKey !== "mikrotik") {
+    throw new RegistryError(404, "ADAPTER_NOT_CONFIGURED", "Roaming hotspot is not configured for MikroTik adapter");
+  }
+
+  // Load roaming hotspot
+  const hotspotSnap = await db.collection("roaming_hotspots").doc(visitedHotspotId).get();
+  if (!hotspotSnap.exists) {
+    throw new RegistryError(404, "ADAPTER_NOT_CONFIGURED", "Roaming hotspot not found");
+  }
+  const hotspot = hotspotSnap.data() || {};
+
+  if (hotspot.partnerStatus !== "active") {
+    throw new RegistryError(503, "ADAPTER_DISABLED", `Roaming hotspot partner status is '${hotspot.partnerStatus}', must be active`);
+  }
+  if (hotspot.aaaAdapterKey !== "mikrotik") {
+    throw new RegistryError(404, "ADAPTER_NOT_CONFIGURED", `Roaming hotspot adapter is '${hotspot.aaaAdapterKey}', expected 'mikrotik'`);
+  }
+
+  const deviceLink = hotspot.deviceLink;
+  if (!deviceLink || !deviceLink.deviceId) {
+    throw new RegistryError(404, "ADAPTER_NOT_CONFIGURED", "Roaming hotspot has no linked device");
+  }
+
+  // Load device
+  const deviceSnap = await db.collection("devices").doc(deviceLink.deviceId).get();
+  if (!deviceSnap.exists) {
+    throw new RegistryError(404, "ADAPTER_NOT_CONFIGURED", "Linked device not found");
+  }
+  const device = deviceSnap.data() || {};
+
+  if (device.ownerId !== visitedOwnerId) {
+    throw new RegistryError(403, "UNAUTHORIZED_SCOPE", "Device owner does not match visited owner");
+  }
+
+  // Verify device eligibility (without enabling flags)
+  const networkControl = normalizeNetworkControl(device.networkControl);
+  if (networkControl === NETWORK_CONTROL_MODES.PARTNER_MANAGED) {
+    throw new RegistryError(503, "ADAPTER_DISABLED", "RouterOS mutation refused: this network is partner-managed");
+  }
+  if (networkControl !== NETWORK_CONTROL_MODES.YABALINK_MANAGED) {
+    throw new RegistryError(503, "ADAPTER_DISABLED", "RouterOS mutation refused: networkControl must be yabalink_managed");
+  }
+  if (device.routerOsApiEnabled !== true) {
+    throw new RegistryError(503, "ADAPTER_DISABLED", "RouterOS mutation refused: routerOsApiEnabled is not true for this device");
+  }
+
+  // Validate required router configuration fields
+  const routerOsHost = device.routerOsHost;
+  if (!routerOsHost || typeof routerOsHost !== "string" || routerOsHost.trim().length === 0) {
+    throw new RegistryError(404, "ADAPTER_FAILURE", "The device has no resolvable RouterOS host", { reason: "host_unavailable", field: "routerOsHost" });
+  }
+  const routerOsApiSecretRef = device.routerOsApiSecretRef;
+  if (!routerOsApiSecretRef || typeof routerOsApiSecretRef !== "string" || routerOsApiSecretRef.trim().length === 0) {
+    throw new RegistryError(404, "ADAPTER_FAILURE", "The device has no RouterOS API secret reference", { reason: "secret_ref_missing", field: "routerOsApiSecretRef" });
+  }
+  const routerOsApiUsername = device.routerOsApiUsername;
+  if (!routerOsApiUsername || typeof routerOsApiUsername !== "string" || routerOsApiUsername.trim().length === 0) {
+    throw new RegistryError(404, "ADAPTER_FAILURE", "The device has no RouterOS API username", { reason: "api_username_missing", field: "routerOsApiUsername" });
+  }
+  const routerOsApiPort = device.routerOsApiPort;
+  if (typeof routerOsApiPort !== "number" || routerOsApiPort < 1 || routerOsApiPort > 65535) {
+    throw new RegistryError(404, "ADAPTER_FAILURE", "The device has an invalid RouterOS API port", { reason: "api_port_invalid", field: "routerOsApiPort" });
+  }
+
+  // Load entitlement to get current remaining RAUs (authoritative source)
+  const entSnap = await db.collection("roaming_entitlements").doc(entitlementId).get();
+  if (!entSnap.exists) {
+    throw new RegistryError(404, "ENTITLEMENT_NOT_FOUND", "Entitlement not found");
+  }
+  const entitlement = entSnap.data() || {};
+  if (entitlement.status !== "active") {
+    throw new RegistryError(403, "ENTITLEMENT_EXHAUSTED", "Entitlement is not active");
+  }
+  const quota = entitlement.quota || {};
+  const remainingRaus = quota.remainingMinutes;
+  if (remainingRaus === undefined || remainingRaus === null || !Number.isInteger(remainingRaus) || remainingRaus <= 0) {
+    throw new RegistryError(403, "ENTITLEMENT_EXHAUSTED", "No remaining RAUs to provision network access");
+  }
+
+  // Derive router username (pseudonymous) from real session identity
+  const routerUsername = deriveRouterUsername(
+    { sessionId: session.sessionId || session.id, homeOwnerId: session.homeOwnerId },
+    { identityKey: process.env.MIKROTIK_IDENTITY_KEY }
+  );
+
+  return Object.freeze({
+    device: {
+      deviceId: device.deviceId,
+      ownerId: device.ownerId,
+      networkControl,
+      routerOsApiEnabled: device.routerOsApiEnabled,
+      routerOsApiPort: device.routerOsApiPort,
+      routerOsApiSecretRef: device.routerOsApiSecretRef,
+      routerOsApiUsername: device.routerOsApiUsername,
+      routerOsHost,
+      routerOsTls: device.routerOsTls === true,
+    },
+    routerUsername,
+    remainingRaus,
+    routerConfig: {
+      host: routerOsHost,
+      port: routerOsApiPort,
+      apiUsername: routerOsApiUsername,
+      apiSecretRef: routerOsApiSecretRef,
+      tls: device.routerOsTls === true,
+      timeoutMs: 5000,
+      retries: 3,
+    },
+  });
+}
+
 module.exports = {
   RegistryError,
   isRegistryEnabled,
@@ -714,5 +839,6 @@ module.exports = {
   registerHotspot,
   disableHotspot,
   discoverHotspots,
+  resolveMikroTikContext,
   handleError,
 };

@@ -18,6 +18,7 @@ const hotspotUserService = require("./hotspotUserService");
 const enforcementSnapshot = require("./enforcementSnapshot");
 const mockRouterOsTransport = require("./mockRouterOsTransport");
 const mikrotikEnforcementAdapter = require("./mikrotikEnforcementAdapter");
+const routerOsTransport = require("./routerOsTransport");
 
 module.exports = {
   ...errors,
@@ -29,4 +30,5 @@ module.exports = {
   ...enforcementSnapshot,
   ...mockRouterOsTransport,
   ...mikrotikEnforcementAdapter,
+  ...routerOsTransport,
 };

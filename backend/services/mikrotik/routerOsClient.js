@@ -83,6 +83,226 @@ class MikrotikTransportFailure extends Error {
   }
 }
 
+function classifyTransportError(err) {
+  const kind =
+    err && typeof err.kind === "string" && KIND_TO_ERROR_CODE[err.kind]
+      ? err.kind
+      : TRANSPORT_FAILURE_KINDS.TRANSPORT;
+  return {
+    kind,
+    code: KIND_TO_ERROR_CODE[kind],
+    retryable:
+      err && typeof err.retryable === "boolean"
+        ? err.retryable
+        : RETRIABLE_KINDS.includes(kind),
+  };
+}
+
+/**
+ * Circuit breaker states for the MikroTik transport.
+ * States: CLOSED (normal operation), OPEN (failing, rejecting calls), HALF_OPEN (testing recovery).
+ */
+const CIRCUIT_STATES = Object.freeze({
+  CLOSED: "closed",
+  OPEN: "open",
+  HALF_OPEN: "half_open",
+});
+
+/**
+ * Default circuit breaker configuration.
+ * These are safe, conservative defaults that can be overridden via options.
+ */
+const DEFAULT_CIRCUIT_CONFIG = Object.freeze({
+  // Number of consecutive qualifying failures before opening the circuit
+  failureThreshold: 5,
+  // Time in ms to wait before allowing a half-open probe
+  cooldownMs: 30000,
+  // Maximum concurrent half-open probes allowed (prevents thundering herd)
+  halfOpenMaxConcurrent: 1,
+  // Failure kinds that count toward the failure threshold
+  // Only transport/network failures count; auth/protocol/validation errors do not
+  qualifyingFailureKinds: Object.freeze([
+    TRANSPORT_FAILURE_KINDS.TIMEOUT,
+    TRANSPORT_FAILURE_KINDS.NETWORK,
+  ]),
+});
+
+/**
+ * In-memory circuit breaker registry.
+ * Keyed by router host:port combination.
+ * NOTE: This is process-local. For multi-instance deployments, a distributed
+ * store (e.g., Redis) would be needed for true cross-instance coordination.
+ */
+const circuitBreakers = new Map();
+
+/**
+ * Circuit breaker class for a single router endpoint.
+ * Encapsulates state, failure counting, and state transitions.
+ */
+class CircuitBreaker {
+  constructor(host, port, config = {}) {
+    this.key = `${host}:${port}`;
+    this.config = { ...DEFAULT_CIRCUIT_CONFIG, ...config };
+    this.state = CIRCUIT_STATES.CLOSED;
+    this.failureCount = 0;
+    this.successCount = 0;
+    this.lastFailureTime = null;
+    this.halfOpenProbes = 0;
+    this.lastStateChange = Date.now();
+  }
+
+  /**
+   * Check if a call can proceed.
+   * Returns { allowed: boolean, reason?: string }
+   */
+  canExecute() {
+    const now = Date.now();
+
+    switch (this.state) {
+      case CIRCUIT_STATES.CLOSED:
+        return { allowed: true };
+
+      case CIRCUIT_STATES.OPEN:
+        // Check if cooldown has elapsed to transition to HALF_OPEN
+        if (now - this.lastStateChange >= this.config.cooldownMs) {
+          this._transitionToHalfOpen();
+          return { allowed: true };
+        }
+        return {
+          allowed: false,
+          reason: "circuit_open",
+          retryAfterMs: this.config.cooldownMs - (now - this.lastStateChange),
+        };
+
+      case CIRCUIT_STATES.HALF_OPEN:
+        // Allow only one concurrent probe
+        if (this.halfOpenProbes >= this.config.halfOpenMaxConcurrent) {
+          return {
+            allowed: false,
+            reason: "half_open_probe_limit",
+            retryAfterMs: 1000,
+          };
+        }
+        return { allowed: true };
+
+      default:
+        return { allowed: false, reason: "invalid_state" };
+    }
+  }
+
+  /**
+   * Record a successful call.
+   */
+  recordSuccess() {
+    this.failureCount = 0;
+    this.successCount++;
+
+    if (this.state === CIRCUIT_STATES.HALF_OPEN) {
+      this.halfOpenProbes = Math.max(0, this.halfOpenProbes - 1);
+      // On success in HALF_OPEN, close the circuit
+      this._transitionToClosed();
+    }
+  }
+
+  /**
+   * Record a failed call.
+   * Only qualifying failure kinds increment the failure counter.
+   */
+  recordFailure(kind) {
+    const isQualifying = this.config.qualifyingFailureKinds.includes(kind);
+
+    if (!isQualifying) {
+      // Non-qualifying failures (auth, protocol) don't affect the circuit
+      return;
+    }
+
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+
+    if (this.state === CIRCUIT_STATES.CLOSED) {
+      if (this.failureCount >= this.config.failureThreshold) {
+        this._transitionToOpen();
+      }
+    } else if (this.state === CIRCUIT_STATES.HALF_OPEN) {
+      // Any qualifying failure in HALF_OPEN reopens the circuit
+      this._transitionToOpen();
+    }
+  }
+
+  _transitionToOpen() {
+    this.state = CIRCUIT_STATES.OPEN;
+    this.lastStateChange = Date.now();
+    this.halfOpenProbes = 0;
+  }
+
+  _transitionToHalfOpen() {
+    this.state = CIRCUIT_STATES.HALF_OPEN;
+    this.lastStateChange = Date.now();
+    this.halfOpenProbes = 0;
+  }
+
+  _transitionToClosed() {
+    this.state = CIRCUIT_STATES.CLOSED;
+    this.failureCount = 0;
+    this.successCount = 0;
+    this.lastStateChange = Date.now();
+  }
+
+  /**
+   * Get current circuit breaker status for monitoring/debugging.
+   */
+  getStatus() {
+    return {
+      key: this.key,
+      state: this.state,
+      failureCount: this.failureCount,
+      successCount: this.successCount,
+      halfOpenProbes: this.halfOpenProbes,
+      lastStateChange: this.lastStateChange,
+    };
+  }
+}
+
+/**
+ * Get or create a circuit breaker for a given host:port.
+ * This ensures a single circuit breaker per router endpoint.
+ */
+function getCircuitBreaker(host, port, config = {}) {
+  const key = `${host}:${port}`;
+  let breaker = circuitBreakers.get(key);
+  if (!breaker) {
+    breaker = new CircuitBreaker(host, port, config);
+    circuitBreakers.set(key, breaker);
+  }
+  return breaker;
+}
+
+/**
+ * Clear all circuit breakers (for testing).
+ */
+function resetCircuitBreakers() {
+  circuitBreakers.clear();
+}
+
+/**
+ * Get all circuit breaker statuses (for monitoring/debugging).
+ */
+function getAllCircuitBreakerStatuses() {
+  const statuses = [];
+  for (const [key, breaker] of circuitBreakers.entries()) {
+    statuses.push(breaker.getStatus());
+  }
+  return statuses;
+}
+
+/**
+ * Check if a transport error kind qualifies for circuit breaker failure counting.
+ * Only timeout and network failures count; auth/protocol errors do not.
+ */
+function isQualifyingFailure(kind) {
+  return DEFAULT_CIRCUIT_CONFIG.qualifyingFailureKinds.includes(kind);
+}
+
 function validateTimeoutMs(value) {
   if (value === undefined || value === null) return MIKROTIK_DEFAULT_TIMEOUT_MS;
   if (!Number.isInteger(value)) {
@@ -273,6 +493,23 @@ function createRouterOsClient(options = {}) {
   async function executeCommand(command, input = {}, options2 = {}) {
     const request = resolveRequest(input);
 
+    // Check circuit breaker before attempting
+    const breaker = getCircuitBreaker(request.host, request.port);
+    const circuitCheck = breaker.canExecute();
+    if (!circuitCheck.allowed) {
+      throw mikrotikError(
+        MIKROTIK_ERROR_CODES.MIKROTIK_CIRCUIT_OPEN,
+        "Circuit breaker open for this router",
+        { reason: circuitCheck.reason, retryAfterMs: circuitCheck.retryAfterMs },
+      );
+    }
+
+    // Reserve a half-open slot if in half-open state
+    const breakerStateBefore = breaker.getStatus().state;
+    if (breaker.getStatus().state === CIRCUIT_STATES.HALF_OPEN) {
+      // The canExecute check already validated we can proceed
+    }
+
     const maxAttempts =
       options2.retries === undefined
         ? request.retries + 1
@@ -296,6 +533,9 @@ function createRouterOsClient(options = {}) {
           );
         }
 
+        // Record success in circuit breaker
+        breaker.recordSuccess();
+
         return Object.freeze({
           ok: true,
           alreadyExists: result.alreadyExists === true,
@@ -307,6 +547,11 @@ function createRouterOsClient(options = {}) {
         const classified = classifyTransportError(err);
         lastFailure = classified;
 
+        // Record failure in circuit breaker (only qualifying failures)
+        if (isQualifyingFailure(classified.kind)) {
+          breaker.recordFailure(classified.kind);
+        }
+
         const retryable = classified.retryable && attempt < maxAttempts;
         if (!retryable) break;
 
@@ -316,6 +561,11 @@ function createRouterOsClient(options = {}) {
         const backoff = Math.min(attempt * 100, MIKROTIK_MAX_TIMEOUT_MS);
         await sleepMs(backoff);
       }
+    }
+
+    // Record final failure in circuit breaker if it was a qualifying failure
+    if (lastFailure && isQualifyingFailure(lastFailure.kind)) {
+      breaker.recordFailure(lastFailure.kind);
     }
 
     const exhausted =

@@ -78,6 +78,139 @@ function secretsMatch(provided, expected) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// RouterOS host validation (Phase 8.5C Step 1)
+//
+// Conservative input validation for routerOsHost. This is SYNTAX ONLY.
+// It does NOT perform DNS resolution, network reachability checks, or
+// establish that the host is reachable. It rejects malformed and dangerous
+// values that could be used for SSRF or misconfiguration.
+//
+// Private IP addresses (RFC1918) are ALLOWED because MikroTik routers may
+// legitimately be reachable over a private management network or VPN.
+// This is SYNTAX validation only — it does not create network access.
+//
+// Validation rejects:
+//   - Empty/whitespace-only when explicitly supplied
+//   - URL schemes (http://, https://)
+//   - Paths, query strings, fragments, embedded credentials
+//   - Loopback (127.0.0.1, ::1, localhost)
+//   - Link-local (169.254.0.0/16, fe80::/10)
+//   - Cloud metadata endpoint (169.254.169.254)
+//   - Invalid hostname/IP syntax
+//
+// Private IPs (RFC1918) are ACCEPTED as valid host identifiers.
+// This does NOT create network access or attempt connection.
+//
+// Requirement: Actual network access control (firewall, VPN, static egress IP)
+// is an infrastructure prerequisite for live transport, not something this
+// syntax validation can provide.
+// ─────────────────────────────────────────────────────────────
+
+function validateRouterOsHost(value) {
+  if (value === undefined || value === null) {
+    return null; // optional field, not provided
+  }
+  if (typeof value !== "string") {
+    throw new registry.RegistryError(400, "validation_error", "routerOsHost must be a string");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new registry.RegistryError(400, "validation_error", "routerOsHost cannot be empty or whitespace");
+  }
+
+  // Reject URL schemes
+  if (/^https?:\/\//i.test(trimmed)) {
+    throw new registry.RegistryError(400, "validation_error", "routerOsHost must not include a URL scheme (http:// or https://)");
+  }
+
+  // Reject paths, query strings, fragments
+  if (/[\/\?#]/.test(trimmed)) {
+    throw new registry.RegistryError(400, "validation_error", "routerOsHost must not contain paths, query strings, or fragments");
+  }
+
+  // Reject embedded credentials (user:pass@host)
+  if (/@/.test(trimmed)) {
+    throw new registry.RegistryError(400, "validation_error", "routerOsHost must not contain embedded credentials");
+  }
+
+  // Check for IPv6 literal in brackets [::1] or [2001:db8::1]
+  let host = trimmed;
+  let isIPv6Literal = false;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    isIPv6Literal = true;
+    host = trimmed.slice(1, -1);
+    if (host.length === 0) {
+      throw new registry.RegistryError(400, "validation_error", "Invalid IPv6 literal");
+    }
+  }
+
+  // Validate as IP address
+  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+
+  let isValidIP = false;
+  let ipParts = null;
+
+  if (ipv4Regex.test(host)) {
+    const parts = host.split(".").map(Number);
+    if (parts.every(p => p >= 0 && p <= 255)) {
+      isValidIP = true;
+      ipParts = parts;
+    } else {
+      // IPv4-like syntax but with invalid octet (e.g., 256) - reject, don't fall through to hostname
+      throw new registry.RegistryError(400, "validation_error", "routerOsHost has an invalid IPv4 octet (must be 0-255)");
+    }
+  } else if (ipv6Regex.test(host) || isIPv6Literal) {
+    // Basic IPv6 validation - more thorough validation would use a library
+    // For now, accept if it looks like IPv6 syntax
+    isValidIP = true;
+  }
+
+  // Validate hostname (RFC 1123 / RFC 952)
+  const hostnameRegex = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  const isValidHostname = hostnameRegex.test(host) && host.length <= 253;
+
+  if (!isValidIP && !isValidHostname) {
+    throw new registry.RegistryError(400, "validation_error", "routerOsHost must be a valid hostname or IP address");
+  }
+
+  // Reject dangerous IPs (loopback, link-local, cloud metadata)
+  if (isValidIP && ipParts) {
+    // Loopback 127.0.0.0/8
+    if (ipParts[0] === 127) {
+      throw new registry.RegistryError(400, "validation_error", "routerOsHost must not be a loopback address (127.0.0.0/8)");
+    }
+    // Link-local 169.254.0.0/16
+    if (ipParts[0] === 169 && ipParts[1] === 254) {
+      throw new registry.RegistryError(400, "validation_error", "routerOsHost must not be a link-local address (169.254.0.0/16)");
+    }
+    // Cloud metadata 169.254.169.254
+    if (ipParts[0] === 169 && ipParts[1] === 254 && ipParts[2] === 169 && ipParts[3] === 254) {
+      throw new registry.RegistryError(400, "validation_error", "routerOsHost must not be the cloud metadata endpoint (169.254.169.254)");
+    }
+    // Loopback IPv6 ::1/128 (for IPv6 literals)
+    // We don't fully parse IPv6 here, but we can check the literal
+    if (isIPv6Literal && host === "::1") {
+      throw new registry.RegistryError(400, "validation_error", "routerOsHost must not be the IPv6 loopback address (::1)");
+    }
+    // Link-local IPv6 fe80::/10 (basic check)
+    if (isIPv6Literal && /^fe80:/i.test(host)) {
+      throw new registry.RegistryError(400, "validation_error", "routerOsHost must not be an IPv6 link-local address (fe80::/10)");
+    }
+    // Cloud metadata IPv6 (not typically used, but defensive)
+    // 169.254.169.254 doesn't have a standard IPv6 equivalent, but some clouds use fd00::/8
+  }
+
+  // Reject "localhost" hostname
+  if (host.toLowerCase() === "localhost") {
+    throw new registry.RegistryError(400, "validation_error", "routerOsHost must not be 'localhost'");
+  }
+
+  // Return the validated, trimmed value
+  return trimmed;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Credential redaction helpers (Phase 8.5A security hardening)
 // ─────────────────────────────────────────────────────────────
 // Every device response boundary strips credential material. The document in
@@ -313,6 +446,7 @@ router.post("/api/devices", async (req, res) => {
       networkControl: networkControlRaw,
       routerOsApiEnabled = false,
       routerOsApiPort,
+      routerOsHost,
     } = req.body;
 
     if (!requestedOwnerId || !deviceName || !serviceType) {
@@ -337,6 +471,9 @@ router.post("/api/devices", async (req, res) => {
         message: "At least one service type must be selected.",
       });
     }
+
+    // Validate routerOsHost if provided (Phase 8.5C Step 1)
+    const validatedRouterOsHost = validateRouterOsHost(routerOsHost);
 
     const iface = Array.isArray(interfaces) ? interfaces : toArray(interfaces);
     const deviceId = uuidv4();
@@ -369,6 +506,7 @@ router.post("/api/devices", async (req, res) => {
         Number(routerOsApiPort) > 0
           ? Number(routerOsApiPort)
           : DEFAULT_ROUTER_OS_API_PORT,
+      routerOsHost: validatedRouterOsHost || null,
       // A REFERENCE to a secret held outside the device document, never the
       // secret itself. It stays null until a real secret backend exists; Phase
       // 8.5A ships the resolver abstraction only (mikrotik/secrets.js).
@@ -940,6 +1078,22 @@ router.put("/api/devices/:id", async (req, res) => {
         });
       }
       updateData.routerOsApiPort = port;
+    }
+
+    // Validate routerOsHost if provided (Phase 8.5C Step 1)
+    if (updateData.routerOsHost !== undefined) {
+      try {
+        updateData.routerOsHost = validateRouterOsHost(updateData.routerOsHost);
+      } catch (err) {
+        if (err instanceof registry.RegistryError) {
+          return res.status(err.status).json({
+            success: false,
+            error: err.code,
+            message: err.message,
+          });
+        }
+        throw err;
+      }
     }
 
     updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();

@@ -198,13 +198,30 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
       );
     }
     // Owner isolation: a session may only be enforced on the device owned by the
-    // session's homeOwnerId (or visitedOwnerId). This prevents Owner A from
+    // session's visitedOwnerId. The visited router belongs to the visited hotspot
+    // owner, not the user's home network owner. This prevents Owner A from
     // provisioning network access on Owner B's router.
-    if (this._device.ownerId && context.homeOwnerId && this._device.ownerId !== context.homeOwnerId) {
+    if (!this._device.ownerId || typeof this._device.ownerId !== "string" || this._device.ownerId.trim().length === 0) {
       throw new RoamingAAAAdapterError(
         403,
         "UNAUTHORIZED_SCOPE",
-        "Device owner does not match session homeOwnerId",
+        "Device has no valid owner identifier",
+        { reason: "device_owner_missing" },
+      );
+    }
+    if (!context.visitedOwnerId || typeof context.visitedOwnerId !== "string" || context.visitedOwnerId.trim().length === 0) {
+      throw new RoamingAAAAdapterError(
+        403,
+        "UNAUTHORIZED_SCOPE",
+        "Session context missing valid visitedOwnerId",
+        { reason: "visited_owner_missing" },
+      );
+    }
+    if (this._device.ownerId !== context.visitedOwnerId) {
+      throw new RoamingAAAAdapterError(
+        403,
+        "UNAUTHORIZED_SCOPE",
+        "Device owner does not match session visitedOwnerId",
         { deviceOwnerId: "[REDACTED]", reason: "owner_mismatch" },
       );
     }

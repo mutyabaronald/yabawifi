@@ -9,6 +9,12 @@ const {
   RoamingAAAAdapterRegistryError,
 } = require("./roamingAAAAdapterRegistry");
 const { RoamingAAAAdapterError, nowIso } = require("./roamingAAAAdapter");
+const { resolveMikroTikContext } = require("./roamingRegistryService");
+const { MikrotikEnforcementAdapter } = require("./mikrotik/mikrotikEnforcementAdapter");
+const { createMockRouterOsTransport } = require("./mikrotik/mockRouterOsTransport");
+const { createStaticTestSecretResolver } = require("./mikrotik/secrets");
+const { createRouterOsClient } = require("./mikrotik/routerOsClient");
+const { isMikrotikApiEnabled, isTestModeAllowed, assertMikrotikApiEnabled } = require("./mikrotik/featureFlag");
 
 const ENFORCEMENT_STATUSES = Object.freeze([
   "pending",
@@ -147,6 +153,64 @@ async function resolveAdapterForSession(session) {
 
   const key = session.aaaAdapterKey;
 
+  // Special handling for MikroTik adapter: resolve context and create adapter instance
+  if (key === "mikrotik") {
+    // Check global flag BEFORE creating adapter or any test dependencies.
+    // In production, the global flag MUST be explicitly enabled.
+    // In non-production, test mode is allowed.
+    const isProd = process.env.NODE_ENV === "production";
+    if (!isMikrotikApiEnabled() && !isTestModeAllowed()) {
+      throw new RoamingEnforcementError(
+        503,
+        "ADAPTER_DISABLED",
+        "MikroTik adapter is disabled: ROAMING_MIKROTIK_API_ENABLED is not true",
+        { reason: "global_kill_switch" },
+      );
+    }
+
+    const context = await resolveMikroTikContext(session);
+
+    // Determine test mode: only allowed in non-production environments.
+    // Never enable test mode from request/session input.
+    const isTestMode = process.env.NODE_ENV !== "production";
+
+    // Create transport: mock in test/non-production; fail closed in production (no live transport yet).
+    let transport;
+    let secretResolver;
+    if (process.env.NODE_ENV !== "production") {
+      transport = createMockRouterOsTransport({ script: [] });
+      secretResolver = createStaticTestSecretResolver({});
+    } else {
+      // Production transport not yet implemented; fail closed.
+      throw new RoamingEnforcementError(
+        503,
+        "ADAPTER_DISABLED",
+        "MikroTik live transport not available in production",
+        { reason: "live_transport_not_implemented" },
+      );
+    }
+
+    // Create RouterOS client with transport
+    const client = createRouterOsClient({
+      transport,
+      sleepMs: async () => {},
+    });
+
+    const adapter = new MikrotikEnforcementAdapter({
+      device: context.device,
+      remainingRaus: context.remainingRaus,
+      secretResolver,
+      client,
+      testMode: process.env.NODE_ENV !== "production",
+      timeoutMs: context.routerConfig.timeoutMs,
+      retries: context.routerConfig.retries,
+      identityKey: process.env.MIKROTIK_IDENTITY_KEY,
+    });
+
+    return { adapter, key };
+  }
+
+  // Standard adapter resolution for other adapter types
   const entry = getAAAAdapterEntry(key);
   if (entry && !entry.enabled) {
     throw new RoamingEnforcementError(

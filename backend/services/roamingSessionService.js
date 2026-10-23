@@ -522,6 +522,8 @@ async function updateSessionActivity(sessionId, context = {}, usage = {}) {
     throw new RoamingSessionError(400, "VALIDATION_ERROR", "usedMegabytes must be a non-negative number");
   }
 
+  let transitionedToActive = false;
+  let sessionAaaAdapterKey = null;
   let result;
   try {
     result = await db.runTransaction(async (transaction) => {
@@ -569,6 +571,14 @@ async function updateSessionActivity(sessionId, context = {}, usage = {}) {
 
       const newStatus = session.status === "authorized" ? "active" : session.status;
 
+      // Track whether this call triggers an authorized -> active transition
+      // for a MikroTik-configured session, so provisioning can be attempted
+      // outside the transaction after commit.
+      if (newStatus === "active" && session.status === "authorized" && session.aaaAdapterKey === "mikrotik") {
+        transitionedToActive = true;
+        sessionAaaAdapterKey = session.aaaAdapterKey;
+      }
+
       transaction.set(
         sessionRef,
         {
@@ -590,6 +600,25 @@ async function updateSessionActivity(sessionId, context = {}, usage = {}) {
       "SERVER_ERROR",
       "Failed to update session activity"
     );
+  }
+
+  // Phase 8.5: Trigger MikroTik provisioning outside the transaction when a
+  // MikroTik-configured session transitions from authorized to active.
+  // Idempotent: provisionSessionEnforcement checks roaming_enforcements/{sessionId}.
+  // Failures are logged but do not corrupt session state or block the heartbeat.
+  if (transitionedToActive && sessionAaaAdapterKey === "mikrotik") {
+    try {
+      const { provisionSessionEnforcement } = require("./roamingEnforcementService");
+      const provisionContext = context.userId
+        ? { userId: context.userId }
+        : (context.ownerId ? { ownerId: context.ownerId } : {});
+      await provisionSessionEnforcement(sessionId, provisionContext);
+    } catch (provErr) {
+      console.error(
+        "MikroTik provisioning failed for session (non-fatal, session unaffected):",
+        provErr && provErr.message ? provErr.message : provErr
+      );
+    }
   }
 
   return result;

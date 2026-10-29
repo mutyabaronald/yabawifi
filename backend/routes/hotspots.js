@@ -10,6 +10,7 @@ function publicHotspot(d) {
     id: d.id,
     hotspotName: h.hotspotName || null,
     ssid: h.ssid || null,
+    location: h.location || h.address || null,
     latitude: h.latitude || null,
     longitude: h.longitude || null,
     status: h.status || "online",

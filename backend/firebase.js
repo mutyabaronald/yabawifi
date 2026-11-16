@@ -10,6 +10,77 @@ const { Firestore } = require("@google-cloud/firestore");
 // Use environment variables for production, fallback to serviceAccountKey.json for development
 let serviceAccount;
 
+/**
+ * Normalize a private key string from environment variable.
+ * Handles multiple escaping scenarios:
+ * - Literal \n sequences (escaped newlines)
+ * - Actual newlines (already correct)
+ * - Windows \r\n line endings
+ * - Surrounding quotes
+ * - Extra whitespace
+ * Validates PEM structure before returning.
+ */
+function normalizePrivateKey(rawKey) {
+  if (!rawKey || typeof rawKey !== "string") {
+    throw new Error("FIREBASE_PRIVATE_KEY is missing or not a string");
+  }
+
+  // Remove surrounding quotes if present
+  let key = rawKey.trim();
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1);
+  }
+
+  // Replace escaped newline sequences (\n) with actual newlines
+  // This handles both \\n and \n in the raw string
+  key = key.replace(/\\n/g, "\n");
+
+  // Normalize Windows line endings
+  key = key.replace(/\r\n/g, "\n");
+
+  // Trim whitespace again after replacements
+  key = key.trim();
+
+  // Validate PEM structure
+  const beginMarker = "-----BEGIN PRIVATE KEY-----";
+  const endMarker = "-----END PRIVATE KEY-----";
+
+  if (!key.includes(beginMarker) || !key.includes(endMarker)) {
+    throw new Error(
+      "FIREBASE_PRIVATE_KEY does not appear to be a valid PEM private key. " +
+      "Expected '-----BEGIN PRIVATE KEY-----' and '-----END PRIVATE KEY-----' boundaries."
+    );
+  }
+
+  // Ensure proper line breaks around markers for OpenSSL compatibility
+  // Some environments concatenate everything on one line
+  key = key
+    .replace(new RegExp(beginMarker.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&") + "\\s*"), beginMarker + "\n")
+    .replace(new RegExp("\\s*" + endMarker.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&")), "\n" + endMarker);
+
+  // Ensure the key body has line breaks (OpenSSL expects max 64 chars per line)
+  // Split into header, body, footer
+  const beginIndex = key.indexOf(beginMarker);
+  const endIndex = key.indexOf(endMarker);
+  const header = key.substring(0, beginIndex + beginMarker.length);
+  const footer = key.substring(endIndex);
+  let body = key.substring(beginIndex + beginMarker.length, endIndex).trim();
+
+  // If body doesn't have newlines, it might be a single-line base64 string
+  // Re-wrap to 64 chars per line for OpenSSL compatibility
+  if (!body.includes("\n") && body.length > 0) {
+    const wrapped = body.match(/.{1,64}/g);
+    if (wrapped) {
+      body = "\n" + wrapped.join("\n") + "\n";
+    }
+  } else if (body.includes("\n")) {
+    // Ensure body starts and ends with newline
+    body = "\n" + body.trim() + "\n";
+  }
+
+  return header + body + footer;
+}
+
 // Check if we have all required environment variables for production
 const hasAllEnvVars =
   process.env.FIREBASE_PRIVATE_KEY &&
@@ -18,8 +89,13 @@ const hasAllEnvVars =
 
 if (process.env.NODE_ENV === "production" && hasAllEnvVars) {
   // Production: use environment variables
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n") // Replace literal \n with actual newlines
-    ?.replace(/"/g, ""); // Remove any quotes
+  let privateKey;
+  try {
+    privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+  } catch (e) {
+    console.error("Failed to parse FIREBASE_PRIVATE_KEY:", e.message);
+    throw new Error("Invalid FIREBASE_PRIVATE_KEY format: " + e.message);
+  }
 
   serviceAccount = {
     type: "service_account",

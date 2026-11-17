@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { db, admin } = require("../firebase");
+const { Timestamp } = require("firebase-admin/firestore");
 const {
   sendPasswordResetCode,
   verifyPasswordResetCode,
@@ -11,6 +12,10 @@ const {
   verifyUserPassword,
 } = require("../services/passwordService");
 const { getRoamingUsageForPhone } = require("../services/roamingUsageService");
+const { generateSessionToken, hashToken, normalizePhone } = require("../utils/authUtils");
+const { revokeAllUserSessions, revokeSessionById } = require("../utils/sessionRevocation");
+const { authenticateCustomer, requirePhone } = require("../middleware/authCustomer");
+const { setCsrfCookie, clearCsrfCookie, createSessionCsrfToken } = require("../middleware/csrf");
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_AUTH_ATTEMPTS = 5;
@@ -27,6 +32,42 @@ function checkAuthRateLimit(key) {
   record.count += 1;
   authRateLimitMap.set(key, record);
   return record.count <= RATE_LIMIT_MAX_AUTH_ATTEMPTS;
+}
+
+async function createCustomerSession(req, res, userPhone, firebaseUid, authMethod) {
+  const rawToken = generateSessionToken();
+  const tokenHash = hashToken(rawToken);
+  const expiresAt = Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+
+  await db.collection("user_sessions").doc(tokenHash).set({
+    tokenHash,
+    userPhone: userPhone || null,
+    firebaseUid: firebaseUid || null,
+    authMethod,
+    createdAt: Timestamp.now(),
+    expiresAt,
+    revokedAt: null,
+    revokedReason: null,
+    lastActivityAt: Timestamp.now()
+  });
+
+  const isProduction = process.env.NODE_ENV === "production";
+  res.cookie("userSession", rawToken, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+    path: "/",
+    maxAge: 24 * 60 * 60 * 1000,
+    signed: true
+  });
+
+  const csrfToken = await createSessionCsrfToken(db, tokenHash);
+  setCsrfCookie(res, csrfToken);
+
+  return res.json({
+    success: true,
+    message: "Login successful"
+  });
 }
 
 // Email registration endpoint - Creates Firebase Auth user and syncs to Firestore
@@ -49,6 +90,19 @@ router.post("/register-email", async (req, res) => {
         error:
           "Password must be at least 8 characters and include letters and numbers",
       });
+    }
+
+    // Normalize supplied phone number to canonical E.164 format
+    let normalizedPhone = null;
+    if (phone) {
+      try {
+        normalizedPhone = normalizePhone(phone);
+      } catch (_) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid phone number format",
+        });
+      }
     }
 
     // Check if email already exists in Firestore
@@ -87,7 +141,7 @@ router.post("/register-email", async (req, res) => {
     const userData = {
       uid: authUser.uid,
       email,
-      phone: phone || "",
+      phone: normalizedPhone || "",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       authMethod: "email",
@@ -158,13 +212,17 @@ router.post("/auth-email", async (req, res) => {
           authMethod: "email",
         };
 
-    return res.json({
-      success: true,
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-      phone: userData.phone || "",
-      message: "Login successful",
-    });
+    let userPhone = null;
+    if (userData.phone) {
+      try {
+        userPhone = normalizePhone(userData.phone);
+      } catch (_) {
+        userPhone = null;
+      }
+    }
+    const firebaseUid = decodedToken.uid;
+
+    return createCustomerSession(req, res, userPhone, firebaseUid, "email");
   } catch (error) {
     console.error("Email authentication error:", error);
     res.status(500).json({
@@ -194,32 +252,96 @@ router.post("/auth", async (req, res) => {
       });
     }
 
-    let userDoc, userData;
-
+    // Normalize phone to canonical E.164 format before lookup
+    // If normalization fails, reject without revealing account existence
+    let normalizedPhone;
     try {
-      userDoc = await db.collection("users").doc(phone).get();
-      if (userDoc.exists) {
-        userData = userDoc.data();
-      } else {
-        userDoc = null;
-        userData = null;
-      }
-    } catch (err) {
-      userDoc = null;
-      userData = null;
+      normalizedPhone = normalizePhone(phone);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid phone number format",
+      });
     }
 
-    if (!userDoc || !userDoc.exists) {
-      const userQuery = db
-        .collection("users")
-        .where("phone", "==", phone)
-        .limit(1);
-      const snapshot = await userQuery.get();
+    let userDoc, userData;
 
-      if (snapshot.empty) {
+    // Strategy 1 & 2: Try document ID lookup and phone-field query with normalized phone.
+    // Collect all matches to detect duplicate accounts for the same phone number.
+    const normalizedMatches = new Map();
+
+    try {
+      const doc = await db.collection("users").doc(normalizedPhone).get();
+      if (doc.exists) {
+        normalizedMatches.set(doc.id, doc);
+      }
+    } catch (_) {}
+
+    try {
+      const snapshot = await db
+        .collection("users")
+        .where("phone", "==", normalizedPhone)
+        .get();
+      for (const d of snapshot.docs) {
+        normalizedMatches.set(d.id, d);
+      }
+    } catch (_) {}
+
+    if (normalizedMatches.size > 1) {
+      console.error(`Duplicate customer accounts detected for normalized phone ${normalizedPhone}`);
+      return res.status(401).json({
+        success: false,
+        error: "Invalid phone number or password",
+      });
+    }
+
+    if (normalizedMatches.size === 1) {
+      userDoc = normalizedMatches.values().next().value;
+      userData = userDoc.data();
+    } else {
+      // Strategy 3: Legacy compatibility — try known equivalent formats
+      // Existing accounts may have been stored with raw input as doc ID or phone field
+      const legacyMatches = new Map();
+      const legacyFormats = generatePhoneFormats(phone);
+      for (const legacy of legacyFormats) {
+        if (legacy === normalizedPhone) continue;
+
+        try {
+          const doc = await db.collection("users").doc(legacy).get();
+          if (doc.exists) {
+            legacyMatches.set(doc.id, doc);
+          }
+        } catch (_) {}
+
+        try {
+          const snap = await db
+            .collection("users")
+            .where("phone", "==", legacy)
+            .get();
+          for (const d of snap.docs) {
+            legacyMatches.set(d.id, d);
+          }
+        } catch (_) {}
+
+        if (legacyMatches.size > 1) break;
+      }
+
+      if (legacyMatches.size > 1) {
+        console.error(`Duplicate customer accounts detected for legacy phone formats of ${phone}`);
+        return res.status(401).json({
+          success: false,
+          error: "Invalid phone number or password",
+        });
+      }
+
+      if (legacyMatches.size === 1) {
+        userDoc = legacyMatches.values().next().value;
+        userData = userDoc.data();
+      } else {
+        // No existing account — create new one with normalized phone
         const hashedPassword = await hashPassword(password);
-        await db.collection("users").doc(phone).set({
-          phone,
+        await db.collection("users").doc(normalizedPhone).set({
+          phone: normalizedPhone,
           password: hashedPassword,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -230,23 +352,20 @@ router.post("/auth", async (req, res) => {
           isNewUser: true,
           message: "Account created successfully",
         });
-      } else {
-        userDoc = snapshot.docs[0];
-        userData = userDoc.data();
       }
     }
 
     if (!userData.password || userData.password === "") {
       const hashedPassword = await hashPassword(password);
-      await db.collection("users").doc(phone).update({
-        phone,
+      await db.collection("users").doc(normalizedPhone).update({
+        phone: normalizedPhone,
         password: hashedPassword,
         updatedAt: new Date().toISOString(),
         passwordSetAt: new Date().toISOString(),
       });
 
       authRateLimitMap.delete(clientIp);
-      authRateLimitMap.delete(phone);
+      authRateLimitMap.delete(normalizedPhone);
       return res.json({
         success: true,
         isNewUser: true,
@@ -268,19 +387,17 @@ router.post("/auth", async (req, res) => {
 
     if (!isBcryptHash(userData.password)) {
       const hashedPassword = await hashPassword(password);
-      await db.collection("users").doc(phone).update({
+      await db.collection("users").doc(normalizedPhone).update({
         password: hashedPassword,
         updatedAt: new Date().toISOString(),
       });
     }
 
+    const firebaseUid = userData.uid || null;
+
     authRateLimitMap.delete(clientIp);
-    authRateLimitMap.delete(phone);
-    return res.json({
-      success: true,
-      isNewUser: false,
-      message: "Login successful",
-    });
+    authRateLimitMap.delete(normalizedPhone);
+    return createCustomerSession(req, res, normalizedPhone, firebaseUid, "phone");
   } catch (error) {
     console.error("Authentication error:", error);
     res.status(500).json({
@@ -683,6 +800,19 @@ router.post("/reset-password", async (req, res) => {
       passwordSetAt: new Date().toISOString(),
     });
 
+    // Revoke all sessions for this customer after password reset
+    const userData = userDoc.data();
+    const normalizedPhone = normalizePhone(userData.phone || "");
+    const firebaseUid = userData.uid || null;
+    let revocationResult = { revokedCount: 0, errors: [], success: true };
+    if (normalizedPhone) {
+      revocationResult = await revokeAllUserSessions(db, normalizedPhone, firebaseUid, "password_reset");
+      if (revocationResult.errors.length > 0) {
+        console.error("Partial session revocation failure after password reset:", revocationResult.errors);
+      }
+      console.log(`Revoked ${revocationResult.revokedCount} sessions for user ${normalizedPhone} after password reset`);
+    }
+
     // Mark reset code as used (use the resetDoc ID)
     const resetDocIdToUse = resetDoc.id || phone;
     await db.collection("password_resets").doc(resetDocIdToUse).update({
@@ -694,6 +824,10 @@ router.post("/reset-password", async (req, res) => {
     return res.json({
       success: true,
       message: "Password reset successfully",
+      revocation: {
+        revokedCount: revocationResult.revokedCount,
+        partialFailure: revocationResult.errors.length > 0
+      }
     });
   } catch (error) {
     console.error("Reset password error:", error);
@@ -1348,6 +1482,124 @@ router.get("/:phone/loyalty", async (req, res) => {
   } catch (error) {
     console.error("Error fetching loyalty balances:", error);
     res.status(500).json({ error: "Failed to fetch loyalty balances" });
+  }
+});
+
+// Get user roaming usage & history (Phase 7.4 — read-only).
+// Identity is resolved server-side from the phone (the app's existing customer
+// identity convention). The service never trusts client-supplied userId /
+// entitlementId / sessionId / RAU values, and performs no writes.
+router.get("/:phone/roaming-usage", async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const result = await getRoamingUsageForPhone(phone);
+    res.json(result);
+  } catch (err) {
+    console.error("Error fetching roaming usage:", err);
+    res.status(500).json({ error: "Failed to fetch roaming usage" });
+  }
+});
+
+// Customer logout - revoke current session
+router.post("/logout", authenticateCustomer, async (req, res) => {
+  try {
+    const { sessionId } = req.customer;
+    await revokeSessionById(db, sessionId, "logout");
+
+    res.clearCookie("userSession", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/",
+      signed: true
+    });
+    clearCsrfCookie(res);
+
+    res.json({ success: true, message: "Logged out" });
+  } catch (err) {
+    console.error("Logout error:", err);
+    res.status(500).json({ success: false, error: "Logout failed" });
+  }
+});
+
+// Customer receipts - authenticated access
+router.get("/me/receipts", authenticateCustomer, requirePhone, async (req, res) => {
+  try {
+    const userPhone = req.customer.userPhone;
+    const { limit = 50, from, to, cursor } = req.query;
+
+    const safeLimit = Math.min(Math.max(parseInt(limit) || 50, 1), 100);
+
+    let q = db.collection("receipts")
+      .where("phone", "==", userPhone)
+      .orderBy("time", "desc")
+      .orderBy("__name__")
+      .limit(safeLimit + 1);
+
+    if (from) {
+      const fromDate = new Date(from);
+      if (!isNaN(fromDate)) {
+        q = q.where("time", ">=", fromDate);
+      }
+    }
+    if (to) {
+      const toDate = new Date(to);
+      if (!isNaN(toDate)) {
+        q = q.where("time", "<=", toDate);
+      }
+    }
+
+    if (cursor) {
+      const cursorDoc = await db.collection("receipts").doc(cursor).get();
+      if (!cursorDoc.exists) {
+        return res.status(400).json({ success: false, error: "invalid_cursor", message: "Cursor receipt not found" });
+      }
+      const cursorData = cursorDoc.data();
+      if (cursorData.phone !== userPhone) {
+        return res.status(403).json({ success: false, error: "cursor_ownership", message: "Invalid cursor for this user" });
+      }
+      if (from && cursorData.time && new Date(cursorData.time) < new Date(from)) {
+        return res.status(400).json({ success: false, error: "cursor_out_of_range", message: "Cursor before from date" });
+      }
+      q = q.startAfter(cursorDoc);
+    }
+
+    const snap = await q.get();
+    const docs = snap.docs.slice(0, safeLimit);
+
+    const receipts = docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        phone: data.phone,
+        amount: data.amount,
+        packageName: data.packageName,
+        paymentMethod: data.paymentMethod,
+        ownerId: data.ownerId,
+        status: data.status,
+        time: data.time,
+        createdAt: data.time,
+        loyaltyPointsEarned: data.loyaltyPointsEarned || 0,
+        voucherCode: data.voucherCode || null
+      };
+    });
+
+    const hasMore = snap.docs.length > safeLimit;
+    const nextCursor = hasMore ? docs[docs.length - 1].id : null;
+
+    res.json({
+      success: true,
+      receipts,
+      pagination: {
+        limit: safeLimit,
+        hasMore,
+        nextCursor,
+        totalReturned: receipts.length
+      }
+    });
+  } catch (err) {
+    console.error("Fetch receipts error:", err);
+    res.status(500).json({ success: false, error: "internal_error", message: "Failed to fetch receipts" });
   }
 });
 

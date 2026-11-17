@@ -261,6 +261,7 @@ function Login() {
           headers: {
             "Content-Type": "application/json",
           },
+          credentials: "include",
           body: JSON.stringify({ phone, password }),
         },
         8000,
@@ -279,7 +280,7 @@ function Login() {
           setIsFirstTimeSetup(true);
         }
 
-        // Persist phone and navigate to user dashboard
+        // Persist phone for compatibility with existing flows
         localStorage.setItem("phone", phone);
 
         // Clear first-time setup flag after a delay

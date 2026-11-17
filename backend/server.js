@@ -2,6 +2,7 @@
 require("dotenv").config({ path: __dirname + "/.env" });
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const path = require("path");
 const axios = require("axios");
 const adminRoutes = require("./adminRoutes");
@@ -27,6 +28,9 @@ const packagesRoutes = require("./routes/packages");
 const devicesRoutes = require("./routes/devices");
 const deviceTrackingRoutes = require("./routes/deviceTracking");
 const statisticsRoutes = require("./routes/statistics-new");
+const { v4: uuidv4 } = require("uuid");
+const { db } = require("./firebase");
+const { csrfProtection } = require("./middleware/csrf");
 const ownersSupportRoutes = require("./routes/ownersSupport");
 const supportRoutes = require("./routes/support");
 const brandingRoutes = require("./routes/branding");
@@ -55,10 +59,30 @@ if (ROAMING_MOCK_AAA_ENABLED) {
   console.log("[RoamingAAA] Mock AAA adapter disabled (ROAMING_MOCK_AAA_ENABLED=false, default)");
 }
 
-const { v4: uuidv4 } = require("uuid");
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://wifi-automation-frontend.onrender.com"
+];
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("CORS: Origin not allowed"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-CSRF-Token"],
+  exposedHeaders: ["Set-Cookie"]
+}));
+
+app.use(cookieParser(process.env.COOKIE_SECRET));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 // Verify Twilio configuration on startup
 if (
@@ -80,12 +104,8 @@ if (
   });
 }
 
-app.use(cors());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-
-// Debug middleware to log all requests
-app.use((req, res, next) => {
+  // Debug middleware to log all requests
+  app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   next();
 });
@@ -143,7 +163,7 @@ app.use("/api/receipts", receiptRoutes);
 app.use("/api/logo", logoRoutes);
 app.use("/api/packages", packagesRoutes);
 app.use("/api/owners", ownersRoutes);
-app.use("/api/users", usersRoutes);
+app.use("/api/users", csrfProtection(db), usersRoutes);
 app.use("/api/vouchers", vouchersRoutes);
 app.use("/api/routers", routerRoutes);
 app.use("/api", mtnRoutes);

@@ -423,38 +423,33 @@ const normalizePhoneForSearch = (phone) => {
 
 // Helper function to generate all possible phone formats
 const generatePhoneFormats = (phone) => {
-  const formats = [];
+  const formats = new Set();
 
   // Original format
-  formats.push(phone);
+  formats.add(phone);
 
   // Remove all non-digits
-  let cleaned = phone.replace(/\D/g, "");
-  formats.push(cleaned);
+  const cleaned = phone.replace(/\D/g, "");
+  formats.add(cleaned);
 
-  // With country code (Uganda +256)
-  if (!cleaned.startsWith("256") && cleaned.length === 9) {
-    formats.push("256" + cleaned);
-    formats.push("+256" + cleaned);
+  // Strip leading zeros (trunk prefix) and country code to get the NSN
+  let nsn = cleaned;
+  while (nsn.startsWith("0")) {
+    nsn = nsn.substring(1);
+  }
+  if (nsn.startsWith("256")) {
+    nsn = nsn.substring(3);
   }
 
-  // Without country code
-  if (cleaned.startsWith("256") && cleaned.length === 12) {
-    formats.push(cleaned.substring(3));
+  // Generate all equivalent formats from the 9-digit NSN
+  if (nsn.length === 9 && /^\d{9}$/.test(nsn)) {
+    formats.add("+256" + nsn); // International with +
+    formats.add("256" + nsn);  // International without +
+    formats.add("0" + nsn);    // National with trunk prefix
+    formats.add(nsn);          // NSN only
   }
 
-  // With leading zero
-  if (!cleaned.startsWith("0") && cleaned.length === 9) {
-    formats.push("0" + cleaned);
-  }
-
-  // Remove leading zero
-  if (cleaned.startsWith("0") && cleaned.length === 10) {
-    formats.push(cleaned.substring(1));
-  }
-
-  // Return unique formats
-  return [...new Set(formats)];
+  return [...formats];
 };
 
 // Forgot password - Send reset code to phone

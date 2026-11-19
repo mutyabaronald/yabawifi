@@ -2,6 +2,8 @@ const crypto = require("crypto");
 const { db } = require("../../firebase");
 const { mikrotikError, MIKROTIK_ERROR_CODES } = require("./errors");
 
+const CURRENT_KEY_ID = process.env.MIKROTIK_SECRETS_KEY_ID || "v1";
+
 const ROUTER_OS_SECRET_RESOLVER_MODES = Object.freeze({
   STATIC_TEST: "static_test",
   DISABLED_PRODUCTION: "disabled_production",
@@ -118,13 +120,13 @@ function decryptSecret(ciphertext, key) {
 
     const iv = data.subarray(0, IV_LENGTH);
     const authTag = data.subarray(data.length - AUTH_TAG_LENGTH);
-    const ciphertext = data.subarray(IV_LENGTH, data.length - AUTH_TAG_LENGTH);
+    const encryptedData = data.subarray(IV_LENGTH, data.length - AUTH_TAG_LENGTH);
 
     const derivedKey = deriveEncryptionKey(key);
     const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, derivedKey, iv);
     decipher.setAuthTag(authTag);
 
-    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    const plaintext = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
     return plaintext.toString("utf8");
   } catch (err) {
     throw mikrotikError(
@@ -166,8 +168,6 @@ function createProductionSecretResolver(options = {}) {
     isProduction: true,
     async resolveSecret(args = {}) {
       const { secretReference, ownerId, deviceId } = requireScopedResolution(args);
-      assertReferenceBoundToDevice(secretReference, deviceId);
-
       // Fetch encrypted secret from Firestore
       const secretDoc = await db.collection(SECRETS_COLLECTION).doc(secretReference).get();
       if (!secretDoc.exists) {
@@ -189,7 +189,14 @@ function createProductionSecretResolver(options = {}) {
       }
 
       // Decrypt the secret
-      const plaintext = decryptSecret(data.encryptedSecret, data.encryptionKeyId || "default");
+      if (typeof data.encryptionKeyId !== "string" || data.encryptionKeyId.length === 0) {
+        throw secretUnavailable(secretReference, "missing_encryption_key_id");
+      }
+      if (data.encryptionKeyId !== CURRENT_KEY_ID) {
+        throw secretUnavailable(secretReference, "encryption_key_id_mismatch");
+      }
+      // NOTE: CURRENT_KEY_ID is only a label; actual key material comes from resolveEncryptionKey().
+      const plaintext = decryptSecret(data.encryptedSecret, resolveEncryptionKey());
 
       // Validate the resolved secret
       return validateResolvedSecret(plaintext);
@@ -205,7 +212,6 @@ function createProductionSecretResolver(options = {}) {
  */
 async function storeSecret(secretReference, plaintext, ownerId, deviceId, encryptionKeyId = "default") {
   const reference = validateSecretReference(secretReference);
-  assertReferenceBoundToDevice(reference, deviceId);
 
   if (typeof ownerId !== "string" || ownerId.length === 0) {
     throw mikrotikError(MIKROTIK_ERROR_CODES.MIKROTIK_CONFIG_INVALID, "ownerId is required", { field: "ownerId" });
@@ -220,7 +226,7 @@ async function storeSecret(secretReference, plaintext, ownerId, deviceId, encryp
     encryptedSecret,
     ownerId,
     deviceId,
-    encryptionKeyId,
+    encryptionKeyId: CURRENT_KEY_ID,
     createdAt: new Date().toISOString(),
     revokedAt: null,
   });
@@ -233,7 +239,6 @@ async function storeSecret(secretReference, plaintext, ownerId, deviceId, encryp
  */
 async function revokeSecret(secretReference, ownerId, deviceId) {
   const reference = validateSecretReference(secretReference);
-  assertReferenceBoundToDevice(reference, deviceId);
 
   const secretDoc = await db.collection(SECRETS_COLLECTION).doc(reference).get();
   if (!secretDoc.exists) {
@@ -287,17 +292,11 @@ function validateSecretReference(reference) {
   if (typeof reference !== "string" || reference.trim().length === 0) {
     throw secretUnavailable(String(reference), "missing_reference");
   }
-  if (reference.length > ROUTER_OS_MAX_SECRET_REFERENCE_LENGTH) {
-    throw secretUnavailable("[REDACTED]", "reference_too_long");
+  if (!/^rsec_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(reference)) {
+    throw secretUnavailable("[REDACTED]", "invalid_reference_format");
   }
-  if (hasControlOrSpace(reference)) {
-    throw secretUnavailable("[REDACTED]", "reference_has_control_characters");
-  }
-  if (looksLikeSecretMaterial(reference)) {
-    throw secretUnavailable(
-      "[REDACTED]",
-      "reference_looks_like_secret_material",
-    );
+  if (reference.includes("/")) {
+    throw secretUnavailable("[REDACTED]", "invalid_reference_format");
   }
   return reference;
 }
@@ -332,24 +331,8 @@ function requireScopedResolution(args = {}) {
 }
 
 /**
- * Assert that a stored reference is bound to the device it is being resolved
- * for, when the reference carries a device binding. This makes a foreign
- * reference detectable rather than silently resolvable.
+ * Creates a static test secret resolver for testing.
  */
-function assertReferenceBoundToDevice(secretReference, deviceId) {
-  const marker = "device/";
-  const idx = secretReference.indexOf(marker);
-  if (idx === -1) return secretReference; // opaque reference, no binding declared
-  const rest = secretReference.slice(idx + marker.length);
-  const bound = rest.split("/")[0];
-  if (bound && bound !== deviceId) {
-    throw secretUnavailable("[REDACTED]", "reference_not_bound_to_device", {
-      expectedDeviceId: deviceId,
-    });
-  }
-  return secretReference;
-}
-
 function createStaticTestSecretResolver(entries = {}) {
   const table = new Map(Object.entries(entries));
   return {
@@ -409,7 +392,6 @@ function createRouterOsSecretResolver(resolveFn, options = {}) {
     isProduction: options.isProduction === true,
     async resolveSecret(args = {}) {
       const scope = requireScopedResolution(args);
-      assertReferenceBoundToDevice(scope.secretReference, scope.deviceId);
       const resolved = await resolveFn(scope);
       return validateResolvedSecret(resolved);
     },
@@ -464,7 +446,6 @@ module.exports = {
   validateResolvedSecret,
   validateSecretReference,
   requireScopedResolution,
-  assertReferenceBoundToDevice,
   secretUnavailable,
   mikrotikError,
   MIKROTIK_ERROR_CODES,
@@ -472,6 +453,7 @@ module.exports = {
   decryptSecret,
   resolveEncryptionKey,
   deriveEncryptionKey,
+  CURRENT_KEY_ID,
   storeSecret,
   revokeSecret,
 };

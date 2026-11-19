@@ -48,8 +48,9 @@ function UserDashboard() {
   const isDarkMode = isDark;
   const [currentSession, setCurrentSession] = useState({
     isConnected: false,
+    connectionStatus: "unavailable",
     hotspotName: "",
-    hotspotId: "",
+    packageHotspotId: "",
     timeRemaining: 0,
     dataUsed: 0,
     dataLimit: 0,
@@ -189,10 +190,10 @@ function UserDashboard() {
         const response = await axios.get(`/api/users/${userPhone}/loyalty`);
         setLoyaltyBalances(response.data || []);
 
-        // Find loyalty for current hotspot if connected
-        if (currentSession.isConnected && currentSession.hotspotId) {
+        // Find loyalty for current hotspot if we have a hotspot context
+        if (currentSession.packageHotspotId) {
           const currentHotspotLoyalty = response.data.find(
-            (balance) => balance.hotspotId === currentSession.hotspotId
+            (balance) => balance.hotspotId === currentSession.packageHotspotId
           );
           setCurrentHotspotLoyalty(currentHotspotLoyalty?.points || 0);
         } else {
@@ -204,15 +205,11 @@ function UserDashboard() {
     };
 
     fetchLoyaltyBalances();
-  }, [userPhone, currentSession.isConnected, currentSession.hotspotId]);
+  }, [userPhone, currentSession.packageHotspotId]);
 
   // Fetch available loyalty rewards for current hotspot
   useEffect(() => {
-    if (
-      !userPhone ||
-      !currentSession.isConnected ||
-      !currentSession.hotspotId
-    ) {
+    if (!userPhone || !currentSession.packageHotspotId) {
       setAvailableLoyaltyRewards([]);
       return;
     }
@@ -220,7 +217,7 @@ function UserDashboard() {
     const fetchLoyaltyRewards = async () => {
       try {
         const response = await axios.get(
-          `/api/packages/loyalty-rewards/${currentSession.hotspotId}`
+          `/api/packages/loyalty-rewards/${currentSession.packageHotspotId}`
         );
         setAvailableLoyaltyRewards(response.data || []);
       } catch (error) {
@@ -230,12 +227,14 @@ function UserDashboard() {
     };
 
     fetchLoyaltyRewards();
-  }, [userPhone, currentSession.isConnected, currentSession.hotspotId]);
+  }, [userPhone, currentSession.packageHotspotId]);
 
-  // Keep owner branding (logo/name) in sync with the active hotspot in real time
+  // Keep owner branding in sync with the package's hotspot context.
+  // This reflects the hotspot associated with the purchased package,
+  // not the customer's current physical connection.
   useEffect(() => {
     const loadOwnerBranding = async () => {
-      if (!currentSession.isConnected || !currentSession.hotspotId) {
+      if (!currentSession.packageHotspotId) {
         setOwnerInfo({
           ownerName: "",
           ownerPhone: "",
@@ -248,7 +247,7 @@ function UserDashboard() {
       try {
         // Try fetching owner branding by owner/hotspot id
         const res = await axios.get(
-          `/api/owners/logo/${currentSession.hotspotId}`
+          `/api/owners/logo/${currentSession.packageHotspotId}`
         );
         setOwnerInfo({
           ownerName: res.data?.ownerName || "",
@@ -257,12 +256,12 @@ function UserDashboard() {
           logoUrl: res.data?.logoUrl || "",
           motto: res.data?.motto || res.data?.slogan || res.data?.tagline || "",
         });
-        setOwnerId(currentSession.hotspotId);
+        setOwnerId(currentSession.packageHotspotId);
       } catch (e1) {
         try {
           // Fallback: fetch via hotspot details then derive owner branding if provided
           const hs = await axios.get(
-            `/api/hotspots/${currentSession.hotspotId}`
+            `/api/hotspots/${currentSession.packageHotspotId}`
           );
           const branding = hs.data || {};
           setOwnerInfo({
@@ -272,15 +271,22 @@ function UserDashboard() {
             logoUrl: branding.logoUrl || "",
             motto: branding.motto || branding.slogan || branding.tagline || "",
           });
-          setOwnerId(branding.ownerId || currentSession.hotspotId || "");
+          setOwnerId(branding.ownerId || currentSession.packageHotspotId || "");
         } catch (e2) {
-          // If both calls fail, keep existing branding but ensure hotspot name still shows
+          // If both calls fail, clear branding
+          setOwnerInfo({
+            ownerName: "",
+            ownerPhone: "",
+            ownerWhatsapp: "",
+            logoUrl: "",
+          });
+          setOwnerId("");
         }
       }
     };
 
     loadOwnerBranding();
-  }, [currentSession.isConnected, currentSession.hotspotId]);
+  }, [currentSession.packageHotspotId]);
 
   // Function to check and update session status
   const checkAndUpdateSessionStatus = async () => {
@@ -291,13 +297,18 @@ function UserDashboard() {
       );
       const activePackages = response.data || [];
 
+      setActivePackages(activePackages);
+
+      // Package entitlement is NOT connection evidence.
+      // Until an authoritative per-customer router connection source exists,
+      // connection status is always "unavailable".
       if (activePackages.length > 0) {
-        // User has active sessions
         const activePackage = activePackages[0];
         setCurrentSession({
-          isConnected: true,
-          hotspotName: activePackage.hotspotName || "WiFi Hotspot",
-          hotspotId: activePackage.hotspotId || activePackage.ownerId || "",
+          isConnected: false,
+          connectionStatus: "unavailable",
+          hotspotName: activePackage.hotspotName || "",
+          packageHotspotId: activePackage.hotspotId || activePackage.ownerId || "",
           timeRemaining: activePackage.remaining || 0,
           dataUsed: activePackage.dataUsed || 0,
           dataLimit: activePackage.dataLimit || 0,
@@ -306,19 +317,17 @@ function UserDashboard() {
               ? (activePackage.dataUsed / activePackage.dataLimit) * 100
               : 0,
         });
-        setActivePackages(activePackages);
       } else {
-        // No active sessions
         setCurrentSession({
           isConnected: false,
+          connectionStatus: "unavailable",
           hotspotName: "",
-          hotspotId: "",
+          packageHotspotId: "",
           timeRemaining: 0,
           dataUsed: 0,
           dataLimit: 0,
           sessionProgress: 0,
         });
-        setActivePackages([]);
       }
     } catch (error) {
       console.error("Error checking session status:", error);
@@ -366,13 +375,14 @@ function UserDashboard() {
       setActivePackages(packagesRes.data || []);
       setLoyaltyPoints(loyaltyRes.data?.points || 0);
 
-      // Check if user has active session
+      // Package entitlement is NOT connection evidence.
       if (packagesRes.data && packagesRes.data.length > 0) {
         const activePackage = packagesRes.data[0];
         setCurrentSession({
-          isConnected: true,
-          hotspotName: activePackage.hotspotName || "WiFi Hotspot",
-          hotspotId: activePackage.hotspotId || activePackage.ownerId || "",
+          isConnected: false,
+          connectionStatus: "unavailable",
+          hotspotName: activePackage.hotspotName || "",
+          packageHotspotId: activePackage.hotspotId || activePackage.ownerId || "",
           timeRemaining: activePackage.remaining || 0,
           dataUsed: activePackage.dataUsed || 0,
           dataLimit: activePackage.dataLimit || 0,
@@ -521,11 +531,10 @@ function UserDashboard() {
   const handleLoyaltyRedemption = async (rewardPackageId) => {
     if (
       !userPhone ||
-      !currentSession.isConnected ||
-      !currentSession.hotspotId
+      !currentSession.packageHotspotId
     ) {
       setRedeemMessage(
-        "❌ You must be connected to a WiFi hotspot to redeem loyalty points"
+        "❌ You must have a hotspot context to redeem loyalty points"
       );
       return;
     }
@@ -535,7 +544,7 @@ function UserDashboard() {
 
     try {
       const response = await axios.post(
-        `/api/users/${userPhone}/loyalty/${currentSession.hotspotId}/redeem`,
+        `/api/users/${userPhone}/loyalty/${currentSession.packageHotspotId}/redeem`,
         {
           rewardPackageId: rewardPackageId,
         }
@@ -569,7 +578,7 @@ function UserDashboard() {
 
         // Update current hotspot loyalty
         const updatedHotspotLoyalty = loyaltyResponse.data.find(
-          (balance) => balance.hotspotId === currentSession.hotspotId
+          (balance) => balance.hotspotId === currentSession.packageHotspotId
         );
         setCurrentHotspotLoyalty(updatedHotspotLoyalty?.points || 0);
 
@@ -643,7 +652,7 @@ function UserDashboard() {
             }}
           >
             <div style={styles.branding}>
-              {currentSession.isConnected && (
+              {currentSession.packageHotspotId && (
                 <div style={styles.branding}>
                   {ownerInfo?.logoUrl ? (
                     <img
@@ -651,7 +660,7 @@ function UserDashboard() {
                       alt={
                         currentSession.hotspotName ||
                         ownerInfo.ownerName ||
-                        "Hotspot"
+                        "Hotspot (package)"
                       }
                       style={styles.yabaLogo}
                     />
@@ -683,6 +692,7 @@ function UserDashboard() {
                         {currentSession.hotspotName ||
                           ownerInfo?.ownerName ||
                           ""}
+                        {" (package)"}
                       </div>
                       <div
                         style={{
@@ -1136,9 +1146,7 @@ function UserDashboard() {
               <div
                 style={{
                   ...styles.statusDotSidebar,
-                  backgroundColor: currentSession.isConnected
-                    ? "#10b981"
-                    : "#6b7280",
+                  backgroundColor: "#6b7280",
                 }}
               ></div>
               <div style={styles.connectionInfo}>
@@ -1148,31 +1156,8 @@ function UserDashboard() {
                     color: isDarkMode ? "var(--n2)" : "var(--n11)",
                   }}
                 >
-                  {currentSession.isConnected
-                    ? "Connected"
-                    : "Not connected yet"}
+                  Connection status unavailable
                 </div>
-                {currentSession.isConnected && (
-                  <div
-                    style={{
-                      ...styles.connectionDetails,
-                      color: isDarkMode ? "var(--n8)" : "var(--n9)",
-                    }}
-                  >
-                    {currentSession.hotspotName}
-                    {currentSession.timeRemaining > 0 && (
-                      <span
-                        style={{
-                          ...styles.connectionTime,
-                          color: isDarkMode ? "#10b981" : "#059669",
-                        }}
-                      >
-                        {formatTimeRemaining(currentSession.timeRemaining)}{" "}
-                        remaining
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -1208,25 +1193,21 @@ function UserDashboard() {
       >
         {/* Top Header Bar */}
         <div style={styles.topHeader}>
-          <div style={styles.connectionStatus}>
-            <div
-              style={{
-                ...styles.statusDot,
-                backgroundColor: currentSession.isConnected
-                  ? "#10b981"
-                  : "#6b7280",
-              }}
-            ></div>
-            <span style={styles.statusText}>
-              {currentSession.isConnected
-                ? `Connected to ${currentSession.hotspotName}`
-                : "Not connected yet"}
-            </span>
-            {currentSession.isConnected && currentSession.timeRemaining > 0 && (
-              <span style={styles.timeRemaining}>
-                {formatTimeRemaining(currentSession.timeRemaining)} remaining
+            <div style={styles.connectionStatus}>
+              <div
+                style={{
+                  ...styles.statusDot,
+                  backgroundColor: "#6b7280",
+                }}
+              ></div>
+              <span style={styles.statusText}>
+                Connection status unavailable
               </span>
-            )}
+              {currentSession.timeRemaining > 0 && (
+                <span style={styles.timeRemaining}>
+                  {formatTimeRemaining(currentSession.timeRemaining)} remaining
+                </span>
+              )}
             {/* Add refresh button for session status */}
             <button
               onClick={refreshSessionStatus}
@@ -1238,8 +1219,8 @@ function UserDashboard() {
           </div>
 
           <div style={styles.headerRight}>
-            {/* Show current hotspot loyalty points if connected */}
-            {currentSession.isConnected && currentHotspotLoyalty > 0 && (
+            {/* Show package hotspot loyalty points if we have a package context */}
+            {currentHotspotLoyalty > 0 && currentSession.packageHotspotId && (
               <div
                 style={{
                   backgroundColor: isDarkMode ? "#1f2937" : "#f3f4f6",
@@ -1424,7 +1405,7 @@ function UserDashboard() {
             })}
             <LoyaltyProgram
               userPhone={userPhone}
-              currentHotspotId={currentSession.hotspotId || ownerId}
+              currentHotspotId={currentSession.packageHotspotId || ownerId}
             />
           </div>
         )}
@@ -1433,7 +1414,7 @@ function UserDashboard() {
           <div style={styles.section}>
             <UserReviewsHistory
               userPhone={userPhone}
-              currentHotspotId={currentSession.hotspotId || ownerId}
+              currentHotspotId={currentSession.packageHotspotId || ownerId}
             />
           </div>
         )}
@@ -1460,19 +1441,17 @@ function UserDashboard() {
                   Welcome back, {userPhone}! 👋
                 </h2>
                 <p className="yaba-muted">
-                  {currentSession.isConnected
-                    ? `You're connected to ${currentSession.hotspotName}`
-                    : "Connect to a WiFi hotspot to get started"}
+                  Connection status unavailable
                 </p>
               </div>
-              {/* Update loyalty points banner to show current hotspot points */}
-              {currentSession.isConnected && currentHotspotLoyalty > 0 && (
+              {/* Update loyalty points banner to show package hotspot points */}
+              {currentHotspotLoyalty > 0 && currentSession.packageHotspotId && (
                 <div
                   className="yaba-btn yaba-btn--success"
                   style={styles.loyaltyPointsBanner}
                 >
                   ⭐ {currentHotspotLoyalty} Loyalty Points at{" "}
-                  {currentSession.hotspotName}
+                  {currentSession.hotspotName} (package)
                 </div>
               )}
             </div>
@@ -1488,7 +1467,7 @@ function UserDashboard() {
                   className="yaba-card-title"
                   style={{ fontSize: "24px", margin: "8px 0" }}
                 >
-                  {currentSession.isConnected ? "Connected" : "Not Connected"}
+                  Connection status unavailable
                 </div>
                 <div className="yaba-muted" style={{ fontSize: "12px" }}>
                   vs last month
@@ -1502,11 +1481,9 @@ function UserDashboard() {
                 </div>
                 <div
                   className="yaba-card-title"
-                  style={{ fontSize: "24px", margin: "8px 0" }}
+                  style={{ fontSize: "18px", margin: "4px 0" }}
                 >
-                  {currentSession.isConnected
-                    ? formatTimeRemaining(currentSession.timeRemaining)
-                    : "0min"}
+                  {formatTimeRemaining(currentSession.timeRemaining)}
                 </div>
                 <div className="yaba-muted" style={{ fontSize: "12px" }}>
                   vs last month
@@ -1555,17 +1532,13 @@ function UserDashboard() {
                   <div style={styles.sessionBoxIcon}>📶</div>
                   <div style={styles.sessionBoxContent}>
                     <div className="yaba-muted">
-                      {currentSession.isConnected
-                        ? "Connected to WiFi"
-                        : "Not Connected"}
+                      Connection status unavailable
                     </div>
                     <div
                       className="yaba-card-title"
                       style={{ fontSize: "18px", margin: "4px 0" }}
                     >
-                      {currentSession.isConnected
-                        ? currentSession.hotspotName
-                        : "Connect to get started"}
+                      {currentSession.hotspotName || "No active hotspot"}
                     </div>
                   </div>
                 </div>
@@ -1574,14 +1547,12 @@ function UserDashboard() {
                   <div style={styles.sessionBoxIcon}>⏰</div>
                   <div style={styles.sessionBoxContent}>
                     <div className="yaba-muted">Time Remaining</div>
-                    <div
-                      className="yaba-card-title"
-                      style={{ fontSize: "18px", margin: "4px 0" }}
-                    >
-                      {currentSession.isConnected
-                        ? formatTimeRemaining(currentSession.timeRemaining)
-                        : "0h 0m"}
-                    </div>
+                <div
+                  className="yaba-card-title"
+                  style={{ fontSize: "18px", margin: "4px 0" }}
+                >
+                  {formatTimeRemaining(currentSession.timeRemaining)}
+                </div>
                   </div>
                 </div>
 
@@ -1593,19 +1564,17 @@ function UserDashboard() {
                       className="yaba-card-title"
                       style={{ fontSize: "18px", margin: "4px 0" }}
                     >
-                      {currentSession.isConnected
-                        ? `${formatDataUsage(
-                            currentSession.dataUsed
-                          )} / ${formatDataUsage(
-                            currentSession.dataLimit
-                          )} (${currentSession.sessionProgress.toFixed(1)}%)`
-                        : "0 MB / 0 MB (0%)"}
+                      {`${formatDataUsage(
+                        currentSession.dataUsed
+                      )} / ${formatDataUsage(
+                        currentSession.dataLimit
+                      )} (${currentSession.sessionProgress.toFixed(1)}%)`}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {currentSession.isConnected && (
+              {currentSession.packageHotspotId && (
                 <div style={styles.sessionProgressContainer}>
                   <div style={styles.sessionProgressBar}>
                     <div

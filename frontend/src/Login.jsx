@@ -52,47 +52,51 @@ function Login() {
     }
   };
 
-  // 🔥 Fetch logo on load from URL context (routerId/ownerId). Fallback: look up by phone as user types.
+  // 🔥 Fetch logo on load from verified router context only.
+  // Only routerId is trusted — it is resolved by the backend to a registered
+  // router and its actual owner association. Arbitrary ownerId is not trusted.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const routerId = params.get("routerId");
-    const ownerId = params.get("ownerId");
     const ref = params.get("ref"); // Check for referral code
 
-    const fetchByContext = async () => {
+    // Clear stale branding when router context changes or is removed
+    if (!routerId) {
+      setLogoUrl("");
+      setOwnerName("");
+      setOwnerPhone("");
+      setOwnerWhatsapp("");
+    }
+
+    const fetchByRouter = async () => {
+      if (!routerId) return;
       try {
-        if (routerId) {
-          const res = await fetch(
-            `/api/routers/${encodeURIComponent(routerId)}/portal-branding`,
-          );
-          if (res.ok) {
-            const json = await res.json();
-            setLogoUrl(json.logoUrl || "");
-            setOwnerName(json.ownerName || "");
-            setOwnerPhone(json.ownerPhone || "");
-            setOwnerWhatsapp(json.ownerWhatsapp || "");
-            return;
-          }
-        }
-        if (ownerId) {
-          const res = await fetch(
-            `/api/owners/logo/${encodeURIComponent(ownerId)}`,
-          );
-          if (res.ok) {
-            const json = await res.json();
-            setLogoUrl(json.logoUrl || "");
-            setOwnerName(json.ownerName || "");
-            setOwnerPhone(json.ownerPhone || "");
-            setOwnerWhatsapp(json.ownerWhatsapp || "");
-            return;
-          }
+        const res = await fetch(
+          `/api/routers/${encodeURIComponent(routerId)}/portal-branding`,
+        );
+        if (res.ok) {
+          const json = await res.json();
+          setLogoUrl(json.logoUrl || "");
+          setOwnerName(json.ownerName || "");
+          setOwnerPhone(json.ownerPhone || "");
+          setOwnerWhatsapp(json.ownerWhatsapp || "");
+        } else {
+          // Router not found or unregistered — clear branding
+          setLogoUrl("");
+          setOwnerName("");
+          setOwnerPhone("");
+          setOwnerWhatsapp("");
         }
       } catch (e) {
-        // ignore and fallback to phone lookup
+        // Network error — clear branding, do not fall back to phone lookup
+        setLogoUrl("");
+        setOwnerName("");
+        setOwnerPhone("");
+        setOwnerWhatsapp("");
       }
     };
 
-    fetchByContext();
+    fetchByRouter();
 
     // Handle referral code
     if (ref) {
@@ -210,32 +214,6 @@ function Login() {
 
     return R * c; // Distance in meters
   };
-
-  // Debounced phone lookup to avoid excessive API calls
-  useEffect(() => {
-    const timeoutId = setTimeout(async () => {
-      if (!phone || phone.length < 4) return;
-      try {
-        // Use backend API instead of direct Firebase for better performance
-        const response = await fetch(
-          `${
-            import.meta.env.VITE_API_URL || "http://localhost:5000"
-          }/api/owners/by-phone/${encodeURIComponent(phone)}`,
-        );
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) {
-            setLogoUrl(data.owner.logoUrl || "");
-            setOwnerName(data.owner.ownerName || "");
-            setOwnerPhone(data.owner.ownerPhone || "");
-            setOwnerWhatsapp(data.owner.ownerWhatsapp || "");
-          }
-        }
-      } catch {}
-    }, 300); // 300ms debounce
-
-    return () => clearTimeout(timeoutId);
-  }, [phone]);
 
   const handleLogin = async () => {
     if (!phone || !password) {

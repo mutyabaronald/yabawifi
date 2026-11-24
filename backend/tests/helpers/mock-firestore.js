@@ -281,6 +281,20 @@ class MockTransaction {
     this.writes.push({ type: "create", path: docRef.path, data });
   }
 
+  set(docRef, data, options = {}) {
+    const merge = options.merge || false;
+    if (merge) {
+      const existing = this.firestore.docs.get(docRef.path);
+      if (existing) {
+        this.writes.push({ type: "update", path: docRef.path, data });
+      } else {
+        this.writes.push({ type: "create", path: docRef.path, data });
+      }
+    } else {
+      this.writes.push({ type: "create", path: docRef.path, data });
+    }
+  }
+
   update(docRef, data) {
     this.writes.push({ type: "update", path: docRef.path, data });
   }

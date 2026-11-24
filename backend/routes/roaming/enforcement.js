@@ -7,6 +7,7 @@ const {
   disconnectSessionEnforcement,
   getSessionUsage,
   checkEnforcementHealth,
+  checkMikroTikRouterHealth,
   RoamingEnforcementError,
 } = require("../../services/roamingEnforcementService");
 const { verifyUserPassword, isBcryptHash } = require("../../services/passwordService");
@@ -17,7 +18,7 @@ async function verifyUserIdentity(req) {
   if (authHeader.startsWith("Bearer ")) {
     const idToken = authHeader.slice(7);
     try {
-      const decoded = await db.admin.auth().verifyIdToken(idToken);
+      const decoded = await admin.auth().verifyIdToken(idToken);
       return { userId: decoded.uid, method: "firebase_id_token" };
     } catch (err) {
       // Fall through to body credentials
@@ -27,7 +28,7 @@ async function verifyUserIdentity(req) {
   const { idToken } = req.body || {};
   if (idToken) {
     try {
-      const decoded = await db.admin.auth().verifyIdToken(idToken);
+      const decoded = await admin.auth().verifyIdToken(idToken);
       return { userId: decoded.uid, method: "firebase_id_token" };
     } catch (err) {
       throw new Error("Invalid Firebase ID token");
@@ -83,6 +84,13 @@ async function verifyOwnerIdentity(req) {
 
 function handleEnforcementError(res, err) {
   if (err instanceof RoamingEnforcementError) {
+    return res.status(err.status).json({
+      success: false,
+      error: err.code,
+      message: err.message,
+    });
+  }
+  if (err && typeof err.status === "number" && err.code) {
     return res.status(err.status).json({
       success: false,
       error: err.code,
@@ -251,6 +259,41 @@ router.get("/:sessionId/usage", async (req, res) => {
   }
 });
 
+router.get("/:sessionId/health", async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    let context = {};
+
+    try {
+      const auth = await verifyUserIdentity(req);
+      context.userId = auth.userId;
+    } catch (err) {
+      try {
+        const ownerAuth = await verifyOwnerIdentity(req);
+        context.ownerId = ownerAuth.ownerId;
+      } catch (ownerErr) {
+        return handleRegistryError(res, ownerErr);
+      }
+    }
+
+    const result = await checkMikroTikRouterHealth(sessionId, context);
+
+    return res.json({
+      success: true,
+      sessionId,
+      adapterKey: result.adapterKey,
+      healthy: result.healthy,
+      state: result.state,
+      reason: result.reason,
+      details: result.details,
+      checkedAt: result.checkedAt,
+    });
+  } catch (err) {
+    return handleEnforcementError(res, err);
+  }
+});
+
 router.get("/health", async (req, res) => {
   try {
     let adapterKey = null;
@@ -268,6 +311,14 @@ router.get("/health", async (req, res) => {
       }
 
       adapterKey = requestedKey;
+
+      if (adapterKey === "mikrotik") {
+        return res.status(400).json({
+          success: false,
+          error: "VALIDATION_ERROR",
+          message: "MikroTik health checks require session-scoped endpoint: GET /:sessionId/health",
+        });
+      }
     } catch (ownerErr) {
       return handleRegistryError(res, ownerErr);
     }

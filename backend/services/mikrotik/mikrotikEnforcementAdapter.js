@@ -150,6 +150,7 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
     this._routerUsername = config.routerUsername || null;
     this._routerPassword = config.routerPassword || null;
     this._identityKey = config.identityKey || null;
+    this._apiPassword = config.apiPassword || null;
 
     // Test mode (allows operation when global flag is off in non-production)
     this._testMode = config.testMode === true;
@@ -306,6 +307,7 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
         config,
         secretResolver: this._secretResolver,
         client: this._client,
+        apiPassword: this._apiPassword,
         testMode: this._testMode,
         timeoutMs: this._timeoutMs,
         retries: this._retries,
@@ -333,6 +335,8 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
       });
     } catch (err) {
       throw mapMikrotikToAdapterError(err);
+    } finally {
+      this._apiPassword = null;
     }
   }
 
@@ -356,6 +360,7 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
         config,
         secretResolver: this._secretResolver,
         client: this._client,
+        apiPassword: this._apiPassword,
         testMode: this._testMode,
         timeoutMs: this._timeoutMs,
         retries: this._retries,
@@ -371,6 +376,8 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
       });
     } catch (err) {
       throw mapMikrotikToAdapterError(err);
+    } finally {
+      this._apiPassword = null;
     }
   }
 
@@ -394,6 +401,7 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
         config,
         secretResolver: this._secretResolver,
         client: this._client,
+        apiPassword: this._apiPassword,
         testMode: this._testMode,
         timeoutMs: this._timeoutMs,
         retries: this._retries,
@@ -411,6 +419,8 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
       });
     } catch (err) {
       throw mapMikrotikToAdapterError(err);
+    } finally {
+      this._apiPassword = null;
     }
   }
 
@@ -469,6 +479,7 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
         device: this._device,
         secretResolver: this._secretResolver,
         client: this._client,
+        apiPassword: this._apiPassword,
         testMode: this._testMode,
       });
 
@@ -484,6 +495,8 @@ class MikrotikEnforcementAdapter extends RoamingAAAAdapter {
       });
     } catch (err) {
       throw mapMikrotikToAdapterError(err);
+    } finally {
+      this._apiPassword = null;
     }
   }
 

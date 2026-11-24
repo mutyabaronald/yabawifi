@@ -8,12 +8,13 @@ const {
   getAAAAdapterEntry,
   RoamingAAAAdapterRegistryError,
 } = require("./roamingAAAAdapterRegistry");
-const { RoamingAAAAdapterError, nowIso } = require("./roamingAAAAdapter");
+const { RoamingAAAAdapter, RoamingAAAAdapterError, nowIso } = require("./roamingAAAAdapter");
 const { resolveMikroTikContext } = require("./roamingRegistryService");
 const { MikrotikEnforcementAdapter } = require("./mikrotik/mikrotikEnforcementAdapter");
 const { createMockRouterOsTransport } = require("./mikrotik/mockRouterOsTransport");
-const { createStaticTestSecretResolver } = require("./mikrotik/secrets");
-const { createRouterOsClient } = require("./mikrotik/routerOsClient");
+const { createMikroTikTransport } = require("./mikrotik/routerOsTransport");
+const { createStaticTestSecretResolver, createProductionSecretResolver } = require("./mikrotik/secrets");
+const { createRouterOsClient, getCircuitBreakerStatus, CIRCUIT_STATES, buildHealthCommand } = require("./mikrotik/routerOsClient");
 const { isMikrotikApiEnabled, isTestModeAllowed, assertMikrotikApiEnabled } = require("./mikrotik/featureFlag");
 
 const ENFORCEMENT_STATUSES = Object.freeze([
@@ -180,34 +181,100 @@ async function resolveAdapterForSession(session) {
     if (process.env.NODE_ENV !== "production") {
       transport = createMockRouterOsTransport({ script: [] });
       secretResolver = createStaticTestSecretResolver({});
+
+      const client = createRouterOsClient({
+        transport,
+        sleepMs: async () => {},
+      });
+
+      const adapter = new MikrotikEnforcementAdapter({
+        device: context.device,
+        remainingRaus: context.remainingRaus,
+        secretResolver,
+        client,
+        testMode: true,
+        timeoutMs: context.routerConfig.timeoutMs,
+        retries: context.routerConfig.retries,
+        identityKey: process.env.MIKROTIK_IDENTITY_KEY,
+      });
+
+      return { adapter, key, transport };
     } else {
-      // Production transport not yet implemented; fail closed.
-      throw new RoamingEnforcementError(
-        503,
-        "ADAPTER_DISABLED",
-        "MikroTik live transport not available in production",
-        { reason: "live_transport_not_implemented" },
-      );
+      // Production: resolve secret once, construct live transport, client, and adapter.
+      // If transport creation succeeds but client or adapter construction fails,
+      // close the already-created transport before propagating the original error.
+      let productionTransport = null;
+      try {
+        const productionSecretResolver = createProductionSecretResolver({
+          encryptionKey: process.env.MIKROTIK_SECRET_ENCRYPTION_KEY,
+        });
+
+        const resolvedPassword = await productionSecretResolver.resolveSecret({
+          secretReference: context.routerConfig.apiSecretRef,
+          ownerId: context.device.ownerId,
+          deviceId: context.device.deviceId,
+        });
+
+        productionTransport = createMikroTikTransport({
+          host: context.routerConfig.host,
+          port: context.routerConfig.port,
+          tls: context.routerConfig.tls,
+          credentials: {
+            username: context.routerConfig.apiUsername,
+            password: resolvedPassword,
+          },
+          timeoutMs: context.routerConfig.timeoutMs,
+          retries: context.routerConfig.retries,
+          connectTimeoutMs: 10000,
+        });
+
+        const client = createRouterOsClient({
+          transport: productionTransport,
+          sleepMs: async () => {},
+          timeoutMs: context.routerConfig.timeoutMs,
+          retries: context.routerConfig.retries,
+        });
+
+        secretResolver = productionSecretResolver;
+
+        const adapter = new MikrotikEnforcementAdapter({
+          device: context.device,
+          remainingRaus: context.remainingRaus,
+          secretResolver,
+          client,
+          testMode: false,
+          timeoutMs: context.routerConfig.timeoutMs,
+          retries: context.routerConfig.retries,
+          identityKey: process.env.MIKROTIK_IDENTITY_KEY,
+          apiPassword: resolvedPassword,
+        });
+
+        transport = productionTransport;
+        return { adapter, key, transport };
+      } catch (err) {
+        // Construction failure: close any transport that was created before
+        // propagating the original error. Cleanup failure must never mask it.
+        if (productionTransport && typeof productionTransport.close === "function") {
+          try {
+            await productionTransport.close();
+          } catch (closeErr) {
+            try {
+              await logAuthEvent({
+                eventType: "enforcement_transport_construction_cleanup_failed",
+                operation: "resolveAdapter",
+                sessionId: session.sessionId,
+                aaaAdapterKey: key,
+                success: false,
+                reason: "transport_construction_cleanup_failed",
+              });
+            } catch (diagErr) {
+              // Diagnostic recording failure must never mask the original error.
+            }
+          }
+        }
+        throw err;
+      }
     }
-
-    // Create RouterOS client with transport
-    const client = createRouterOsClient({
-      transport,
-      sleepMs: async () => {},
-    });
-
-    const adapter = new MikrotikEnforcementAdapter({
-      device: context.device,
-      remainingRaus: context.remainingRaus,
-      secretResolver,
-      client,
-      testMode: process.env.NODE_ENV !== "production",
-      timeoutMs: context.routerConfig.timeoutMs,
-      retries: context.routerConfig.retries,
-      identityKey: process.env.MIKROTIK_IDENTITY_KEY,
-    });
-
-    return { adapter, key };
   }
 
   // Standard adapter resolution for other adapter types
@@ -281,7 +348,7 @@ function checkAdapterCapability(adapter, operation) {
 
 async function provisionSessionEnforcement(sessionId, context = {}, idempotencyKey = null, metadata = {}) {
   const { session } = await validateSessionForEnforcement(sessionId, context);
-  const { adapter, key } = await resolveAdapterForSession(session);
+  const { adapter, key, transport } = await resolveAdapterForSession(session);
 
   let result;
   try {
@@ -494,12 +561,33 @@ async function provisionSessionEnforcement(sessionId, context = {}, idempotencyK
       "SERVER_ERROR",
       "Failed to provision roaming session enforcement"
     );
+  } finally {
+    if (transport && typeof transport.close === "function") {
+      try {
+        await transport.close();
+      } catch (closeErr) {
+        // Sanitized internal diagnostic: cleanup failure must not mask
+        // the original operation error or expose credentials.
+        try {
+          await logAuthEvent({
+            eventType: "enforcement_transport_cleanup_failed",
+            operation: "provision",
+            sessionId,
+            aaaAdapterKey: key,
+            success: false,
+            reason: "transport_cleanup_failed",
+          });
+        } catch (diagErr) {
+          // Diagnostic recording failure must never mask the original error.
+        }
+      }
+    }
   }
 }
 
 async function revokeSessionEnforcement(sessionId, context = {}, reason = "admin_revoked") {
   const { session } = await validateSessionForEnforcement(sessionId, context);
-  const { adapter, key } = await resolveAdapterForSession(session);
+  const { adapter, key, transport } = await resolveAdapterForSession(session);
 
   let result;
   try {
@@ -615,7 +703,13 @@ async function revokeSessionEnforcement(sessionId, context = {}, reason = "admin
       success: true,
     });
 
-    return result;
+    return {
+      success: true,
+      sessionId,
+      enforcement: result.enforcement,
+      alreadyRevoked: false,
+      adapterResult: result,
+    };
   } catch (err) {
     if (err instanceof RoamingEnforcementError) throw err;
     if (err instanceof RoamingAAAAdapterError) {
@@ -630,12 +724,33 @@ async function revokeSessionEnforcement(sessionId, context = {}, reason = "admin
       "SERVER_ERROR",
       "Failed to revoke roaming session enforcement"
     );
+  } finally {
+    if (transport && typeof transport.close === "function") {
+      try {
+        await transport.close();
+      } catch (closeErr) {
+        // Sanitized internal diagnostic: cleanup failure must not mask
+        // the original operation error or expose credentials.
+        try {
+          await logAuthEvent({
+            eventType: "enforcement_transport_cleanup_failed",
+            operation: "revoke",
+            sessionId,
+            aaaAdapterKey: key,
+            success: false,
+            reason: "transport_cleanup_failed",
+          });
+        } catch (diagErr) {
+          // Diagnostic recording failure must never mask the original error.
+        }
+      }
+    }
   }
 }
 
 async function disconnectSessionEnforcement(sessionId, context = {}) {
   const { session } = await validateSessionForEnforcement(sessionId, context);
-  const { adapter, key } = await resolveAdapterForSession(session);
+  const { adapter, key, transport } = await resolveAdapterForSession(session);
 
   let result;
   try {
@@ -743,7 +858,13 @@ async function disconnectSessionEnforcement(sessionId, context = {}) {
       success: true,
     });
 
-    return result;
+    return {
+      success: true,
+      sessionId,
+      enforcement: result.enforcement,
+      alreadyDisconnected: false,
+      adapterResult: result,
+    };
   } catch (err) {
     if (err instanceof RoamingEnforcementError) throw err;
     if (err instanceof RoamingAAAAdapterError) {
@@ -758,79 +879,277 @@ async function disconnectSessionEnforcement(sessionId, context = {}) {
       "SERVER_ERROR",
       "Failed to disconnect roaming session enforcement"
     );
+  } finally {
+    if (transport && typeof transport.close === "function") {
+      try {
+        await transport.close();
+      } catch (closeErr) {
+        // Sanitized internal diagnostic: cleanup failure must not mask
+        // the original operation error or expose credentials.
+        try {
+          await logAuthEvent({
+            eventType: "enforcement_transport_cleanup_failed",
+            operation: "disconnect",
+            sessionId,
+            aaaAdapterKey: key,
+            success: false,
+            reason: "transport_cleanup_failed",
+          });
+        } catch (diagErr) {
+          // Diagnostic recording failure must never mask the original error.
+        }
+      }
+    }
   }
 }
 
 async function getSessionUsage(sessionId, context = {}) {
   const { session } = await validateSessionForEnforcement(sessionId, context);
-  const { adapter, key } = await resolveAdapterForSession(session);
-
-  let usage;
-  try {
-    checkAdapterCapability(adapter, "getUsage");
-    usage = await adapter.getUsage(
-      RoamingAAAAdapter.buildContext({
-        sessionId,
-        userRef: session.userRef,
-        homeOwnerId: session.homeOwnerId,
-        visitedOwnerId: session.visitedOwnerId,
-        visitedHotspotId: session.visitedHotspotId,
-        entitlementId: session.entitlementId,
-        aaaAdapterKey: key,
-      })
-    );
-  } catch (adapterErr) {
-    throw new RoamingEnforcementError(
-      502,
-      "ADAPTER_FAILURE",
-      "AAA adapter failed during usage retrieval"
-    );
-  }
+  const { adapter, key, transport } = await resolveAdapterForSession(session);
 
   try {
-    const enfRef = db.collection("roaming_enforcements").doc(sessionId);
-    const enfDoc = await enfRef.get();
-    if (enfDoc.exists) {
-      await enfRef.set(
-        {
-          lastUsageAt: nowIso(),
-          updatedAt: nowIso(),
-          usage: {
-            usedMinutes: usage.usedMinutes || 0,
-            usedMegabytes: usage.usedMegabytes || 0,
-          },
-        },
-        { merge: true }
+    let usage;
+    try {
+      checkAdapterCapability(adapter, "getUsage");
+      usage = await adapter.getUsage(
+        RoamingAAAAdapter.buildContext({
+          sessionId,
+          userRef: session.userRef,
+          homeOwnerId: session.homeOwnerId,
+          visitedOwnerId: session.visitedOwnerId,
+          visitedHotspotId: session.visitedHotspotId,
+          entitlementId: session.entitlementId,
+          aaaAdapterKey: key,
+        })
+      );
+    } catch (adapterErr) {
+      throw new RoamingEnforcementError(
+        502,
+        "ADAPTER_FAILURE",
+        "AAA adapter failed during usage retrieval"
       );
     }
-  } catch (err) {
-    // Non-fatal: enforcement record update failed, but usage is returned
+
+    try {
+      const enfRef = db.collection("roaming_enforcements").doc(sessionId);
+      const enfDoc = await enfRef.get();
+      if (enfDoc.exists) {
+        await enfRef.set(
+          {
+            lastUsageAt: nowIso(),
+            updatedAt: nowIso(),
+            usage: {
+              usedMinutes: usage.usedMinutes || 0,
+              usedMegabytes: usage.usedMegabytes || 0,
+            },
+          },
+          { merge: true }
+        );
+      }
+    } catch (err) {
+      // Non-fatal: enforcement record update failed, but usage is returned
+    }
+
+    await logAuthEvent({
+      eventType: "enforcement_usage_retrieved",
+      userId: session.userRef.userId,
+      entitlementId: session.entitlementId,
+      homeOwnerId: session.homeOwnerId,
+      visitedOwnerId: session.visitedOwnerId,
+      visitedHotspotId: session.visitedHotspotId,
+      sessionId,
+      aaaAdapterKey: key,
+      success: true,
+    });
+
+    return {
+      sessionId,
+      usage: {
+        usedMinutes: usage.usedMinutes || 0,
+        usedMegabytes: usage.usedMegabytes || 0,
+      },
+      adapterKey: key,
+      lastSampledAt: usage.lastSampledAt || null,
+    };
+  } finally {
+    if (transport && typeof transport.close === "function") {
+      try {
+        await transport.close();
+      } catch (closeErr) {
+        // Sanitized internal diagnostic: cleanup failure must not mask
+        // the original operation error or expose credentials.
+        try {
+          await logAuthEvent({
+            eventType: "enforcement_transport_cleanup_failed",
+            operation: "usage",
+            sessionId,
+            aaaAdapterKey: key,
+            success: false,
+            reason: "transport_cleanup_failed",
+          });
+        } catch (diagErr) {
+          // Diagnostic recording failure must never mask the original error.
+        }
+      }
+    }
   }
-
-  await logAuthEvent({
-    eventType: "enforcement_usage_retrieved",
-    userId: session.userRef.userId,
-    entitlementId: session.entitlementId,
-    homeOwnerId: session.homeOwnerId,
-    visitedOwnerId: session.visitedOwnerId,
-    visitedHotspotId: session.visitedHotspotId,
-    sessionId,
-    aaaAdapterKey: key,
-    success: true,
-  });
-
-  return {
-    sessionId,
-    usage: {
-      usedMinutes: usage.usedMinutes || 0,
-      usedMegabytes: usage.usedMegabytes || 0,
-    },
-    adapterKey: key,
-    lastSampledAt: usage.lastSampledAt || null,
-  };
 }
 
-async function checkEnforcementHealth(adapterKey) {
+/**
+ * Session-scoped MikroTik router health check.
+ *
+ * Requires explicit authenticated session and user/owner context. Validates
+ * the session via validateSessionForEnforcement() before constructing the
+ * inline MikroTik adapter or contacting the router.
+ *
+ * For CLOSED circuits: calls transport.execute() directly with buildHealthCommand()
+ * (never adapter.checkHealth(), client.health(), or executeCommand()), so the
+ * circuit breaker's canExecute()/recordFailure()/recordSuccess() are never
+ * triggered by this path.
+ *
+ * For OPEN/HALF_OPEN: returns DEGRADED without router contact or breaker
+ * state transition.
+ *
+ * @param {string} sessionId - Roaming session ID (required)
+ * @param {object} context - Authenticated context with userId and/or ownerId (required)
+ * @returns {Promise<object>} Health result
+ */
+async function checkMikroTikRouterHealth(sessionId, context) {
+  if (!sessionId || typeof sessionId !== "string") {
+    throw new RoamingEnforcementError(
+      400,
+      "VALIDATION_ERROR",
+      "Session ID is required for MikroTik router health check"
+    );
+  }
+
+  if (!context || typeof context !== "object") {
+    throw new RoamingEnforcementError(
+      400,
+      "VALIDATION_ERROR",
+      "Authenticated context is required for MikroTik router health check"
+    );
+  }
+
+  if (
+    context.userId === undefined &&
+    context.ownerId === undefined
+  ) {
+    throw new RoamingEnforcementError(
+      400,
+      "VALIDATION_ERROR",
+      "Context must include userId or ownerId"
+    );
+  }
+
+  const resolvedUserId = context.userId || null;
+  const resolvedOwnerId = context.ownerId || null;
+
+  if (resolvedUserId === null && resolvedOwnerId === null) {
+    throw new RoamingEnforcementError(
+      400,
+      "VALIDATION_ERROR",
+      "Context must include userId or ownerId"
+    );
+  }
+
+  // Full session authorization: status, expiry, ownership, entitlement
+  const validation = await validateSessionForEnforcement(sessionId, context);
+  const session = validation.session;
+
+  // Device ownership, hotspot, managed-network, API-enabled, secret-ref, remaining-RAU validation
+  let contextResolved;
+  try {
+    contextResolved = await resolveMikroTikContext(session);
+  } catch (err) {
+    throw new RoamingEnforcementError(
+      503,
+      "ADAPTER_UNAVAILABLE",
+      `MikroTik context resolution failed: ${err.message}`
+    );
+  }
+
+  const { host, port } = contextResolved.routerConfig;
+
+  // Read-only circuit breaker inspection — no creation, no state change, no probe consumption
+  const breakerStatus = getCircuitBreakerStatus(host, port);
+
+  if (breakerStatus.state === CIRCUIT_STATES.OPEN || breakerStatus.state === CIRCUIT_STATES.HALF_OPEN) {
+    return {
+      adapterKey: "mikrotik",
+      healthy: false,
+      state: "degraded",
+      reason: breakerStatus.state === CIRCUIT_STATES.OPEN ? "circuit_open" : "half_open",
+      breaker: breakerStatus,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  // CLOSED: construct inline adapter/client/transport, probe via transport.execute() directly
+  let transport = null;
+  try {
+    const { transport: resolvedTransport } = await resolveAdapterForSession(session);
+    transport = resolvedTransport;
+
+    const result = await transport.execute({
+      command: buildHealthCommand(),
+      attempt: 1,
+    });
+
+    if (!result || result.ok !== true) {
+      throw new RoamingEnforcementError(
+        503,
+        "ADAPTER_UNHEALTHY",
+        "MikroTik router health probe returned an unsuccessful result",
+        { details: result }
+      );
+    }
+
+    return {
+      adapterKey: "mikrotik",
+      healthy: true,
+      state: "healthy",
+      details: {
+        reachable: true,
+        state: "reachable",
+        attempts: result.attempts || 1,
+        checkedAt: new Date().toISOString(),
+      },
+      breaker: breakerStatus,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (probeErr) {
+    if (probeErr instanceof RoamingEnforcementError) {
+      throw probeErr;
+    }
+    throw new RoamingEnforcementError(
+      503,
+      "ADAPTER_UNHEALTHY",
+      `MikroTik router health check failed: ${probeErr.message}`
+    );
+  } finally {
+    if (transport && typeof transport.close === "function") {
+      try {
+        await transport.close();
+      } catch (closeErr) {
+        try {
+          await logAuthEvent({
+            eventType: "enforcement_transport_cleanup_failed",
+            operation: "mikrotik_router_health",
+            sessionId,
+            aaaAdapterKey: "mikrotik",
+            success: false,
+            reason: "transport_cleanup_failed",
+          });
+        } catch (diagErr) {
+          // Diagnostic recording failure must never mask the original error.
+        }
+      }
+    }
+  }
+}
+
+async function checkEnforcementHealth(adapterKey, session = null) {
   if (!adapterKey || typeof adapterKey !== "string") {
     throw new RoamingEnforcementError(
       400,
@@ -839,6 +1158,88 @@ async function checkEnforcementHealth(adapterKey) {
     );
   }
 
+  // MikroTik-specific branch using the inline construction path
+  if (adapterKey === "mikrotik") {
+    if (!session || typeof session !== "object") {
+      throw new RoamingEnforcementError(
+        400,
+        "VALIDATION_ERROR",
+        "Session is required for MikroTik health check"
+      );
+    }
+
+    let context;
+    try {
+      context = await resolveMikroTikContext(session);
+    } catch (err) {
+      throw new RoamingEnforcementError(
+        503,
+        "ADAPTER_UNAVAILABLE",
+        `MikroTik context resolution failed: ${err.message}`
+      );
+    }
+
+    const { host, port } = context.routerConfig;
+
+    // Read-only circuit breaker inspection — no state change, no creation, no probe consumption
+    const breakerStatus = getCircuitBreakerStatus(host, port);
+
+    if (breakerStatus.state === CIRCUIT_STATES.OPEN || breakerStatus.state === CIRCUIT_STATES.HALF_OPEN) {
+      return {
+        adapterKey,
+        healthy: false,
+        state: "degraded",
+        reason: breakerStatus.state === CIRCUIT_STATES.OPEN ? "circuit_open" : "half_open",
+        breaker: breakerStatus,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    // CLOSED: proceed with inline adapter construction and direct health probe
+    let transport = null;
+    try {
+      const { adapter, transport: resolvedTransport } = await resolveAdapterForSession(session);
+      transport = resolvedTransport;
+
+      const health = await adapter.checkHealth();
+
+      return {
+        adapterKey,
+        healthy: health && health.healthy === true,
+        state: "healthy",
+        details: health,
+        breaker: breakerStatus,
+        checkedAt: new Date().toISOString(),
+      };
+    } catch (adapterErr) {
+      throw new RoamingEnforcementError(
+        503,
+        "ADAPTER_UNHEALTHY",
+        `MikroTik adapter '${adapterKey}' health check failed: ${adapterErr.message}`
+      );
+    } finally {
+      if (transport && typeof transport.close === "function") {
+        try {
+          await transport.close();
+        } catch (closeErr) {
+          try {
+            await logAuthEvent({
+              eventType: "enforcement_transport_cleanup_failed",
+              operation: "health",
+              sessionId: session.sessionId,
+              aaaAdapterKey: adapterKey,
+              success: false,
+              reason: "transport_cleanup_failed",
+            });
+          } catch (diagErr) {
+            // Diagnostic recording failure must never mask the original error.
+          }
+        }
+      }
+    }
+  }
+
+  // Existing AAA path for non-MikroTik adapters (unchanged)
   if (!isAAAAdapterAvailable(adapterKey)) {
     throw new RoamingEnforcementError(
       503,
@@ -889,5 +1290,6 @@ module.exports = {
   disconnectSessionEnforcement,
   getSessionUsage,
   checkEnforcementHealth,
+  checkMikroTikRouterHealth,
   isValidEnforcementTransition,
 };

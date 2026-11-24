@@ -263,11 +263,16 @@ async function provisionUser(input = {}) {
   const config = input.config || buildHotspotUserConfig(input);
   const client = requireClient(input.client, "addHotspotUser");
 
+  const apiPassword =
+    input.apiPassword != null
+      ? input.apiPassword
+      : await requireApiPassword(input);
+
   const result = await client.addHotspotUser({
     host: requireHost(input.device),
     port: config.routerOsApiPort,
     apiUsername: requireApiUsername(input.device),
-    apiPassword: await requireApiPassword(input),
+    apiPassword,
     tls: input.device.routerOsTls === true,
     timeoutMs: input.timeoutMs,
     retries: input.retries,
@@ -302,11 +307,16 @@ async function removeUser(input = {}) {
   const config = input.config || buildHotspotUserConfig(input);
   const client = requireClient(input.client, "removeHotspotUser");
 
+  const apiPassword =
+    input.apiPassword != null
+      ? input.apiPassword
+      : await requireApiPassword(input);
+
   const result = await client.removeHotspotUser({
     host: requireHost(input.device),
     port: config.routerOsApiPort,
     apiUsername: requireApiUsername(input.device),
-    apiPassword: await requireApiPassword(input),
+    apiPassword,
     tls: input.device.routerOsTls === true,
     timeoutMs: input.timeoutMs,
     retries: input.retries,
@@ -331,11 +341,16 @@ async function disconnectActiveUser(input = {}) {
   const config = input.config || buildHotspotUserConfig(input);
   const client = requireClient(input.client, "removeActiveHotspotUser");
 
+  const apiPassword =
+    input.apiPassword != null
+      ? input.apiPassword
+      : await requireApiPassword(input);
+
   const result = await client.removeActiveHotspotUser({
     host: requireHost(input.device),
     port: config.routerOsApiPort,
     apiUsername: requireApiUsername(input.device),
-    apiPassword: await requireApiPassword(input),
+    apiPassword,
     tls: input.device.routerOsTls === true,
     timeoutMs: input.timeoutMs,
     retries: input.retries,
@@ -387,6 +402,12 @@ async function checkHealth(input = {}) {
   }
 
   const client = requireClient(input.client, "health");
+
+  const apiPassword =
+    input.apiPassword != null
+      ? input.apiPassword
+      : await requireApiPassword(input);
+
   const result = await client.health({
     host: requireHost(device),
     port:
@@ -394,7 +415,7 @@ async function checkHealth(input = {}) {
         ? device.routerOsApiPort
         : DEFAULT_ROUTER_OS_API_PORT,
     apiUsername: requireApiUsername(device),
-    apiPassword: await requireApiPassword(input),
+    apiPassword,
     tls: device.routerOsTls === true,
     timeoutMs: input.timeoutMs,
   });

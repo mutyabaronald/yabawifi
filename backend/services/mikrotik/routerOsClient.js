@@ -278,6 +278,28 @@ function getCircuitBreaker(host, port, config = {}) {
 }
 
 /**
+ * Read-only inspection of an existing circuit breaker.
+ * Never creates a breaker, never changes breaker state, never transitions
+ * OPEN to HALF_OPEN, never consumes HALF_OPEN recovery probes.
+ * Returns a CLOSED default when no breaker is registered for host:port.
+ */
+function getCircuitBreakerStatus(host, port) {
+  const key = `${host}:${port}`;
+  const breaker = circuitBreakers.get(key);
+  if (!breaker) {
+    return {
+      key,
+      state: CIRCUIT_STATES.CLOSED,
+      failureCount: 0,
+      successCount: 0,
+      halfOpenProbes: 0,
+      lastStateChange: null,
+    };
+  }
+  return breaker.getStatus();
+}
+
+/**
  * Clear all circuit breakers (for testing).
  */
 function resetCircuitBreakers() {
@@ -462,6 +484,17 @@ function createRouterOsClient(options = {}) {
       ? options.sleepMs
       : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  // Constructor-level defaults for timeoutMs and retries, used when a
+  // per-call request does not override them.
+  const constructorTimeoutMs =
+    options.timeoutMs === undefined || options.timeoutMs === null
+      ? undefined
+      : validateTimeoutMs(options.timeoutMs);
+  const constructorRetries =
+    options.retries === undefined || options.retries === null
+      ? undefined
+      : validateRetries(options.retries);
+
   if (!transport || typeof transport.execute !== "function") {
     throw invalid("A RouterOS transport with execute() is required", {
       field: "transport",
@@ -473,8 +506,16 @@ function createRouterOsClient(options = {}) {
     const username = requireString(input.apiUsername, "apiUsername");
     const password = requireString(input.apiPassword, "apiPassword");
     const port = validatePort(input.port);
-    const timeoutMs = validateTimeoutMs(input.timeoutMs);
-    const retries = validateRetries(input.retries);
+    const timeoutMs = validateTimeoutMs(
+      input.timeoutMs === undefined || input.timeoutMs === null
+        ? constructorTimeoutMs
+        : input.timeoutMs
+    );
+    const retries = validateRetries(
+      input.retries === undefined || input.retries === null
+        ? constructorRetries
+        : input.retries
+    );
     return {
       host,
       port,
@@ -547,7 +588,9 @@ function createRouterOsClient(options = {}) {
         const classified = classifyTransportError(err);
         lastFailure = classified;
 
-        // Record failure in circuit breaker (only qualifying failures)
+        // Record failure in circuit breaker (only qualifying failures).
+        // Recorded once per attempt here; not repeated after the loop to avoid
+        // double-counting the final failure (circuit-breaker accounting).
         if (isQualifyingFailure(classified.kind)) {
           breaker.recordFailure(classified.kind);
         }
@@ -561,11 +604,6 @@ function createRouterOsClient(options = {}) {
         const backoff = Math.min(attempt * 100, MIKROTIK_MAX_TIMEOUT_MS);
         await sleepMs(backoff);
       }
-    }
-
-    // Record final failure in circuit breaker if it was a qualifying failure
-    if (lastFailure && isQualifyingFailure(lastFailure.kind)) {
-      breaker.recordFailure(lastFailure.kind);
     }
 
     const exhausted =
@@ -648,11 +686,18 @@ function createRouterOsClient(options = {}) {
     }
   }
 
+  async function close() {
+    if (transport && typeof transport.close === "function") {
+      await transport.close();
+    }
+  }
+
   return Object.freeze({
     addHotspotUser,
     removeHotspotUser,
     removeActiveHotspotUser,
     health,
+    close,
     describe() {
       return Object.freeze({
         transport: transport.name || "injected",
@@ -674,6 +719,13 @@ module.exports = {
   TRANSPORT_FAILURE_KINDS,
   RETRIABLE_KINDS,
   MikrotikTransportFailure,
+  CIRCUIT_STATES,
+  classifyTransportError,
+  getCircuitBreaker,
+  getCircuitBreakerStatus,
+  resetCircuitBreakers,
+  getAllCircuitBreakerStatuses,
+  isQualifyingFailure,
   createRouterOsClient,
   buildAddHotspotUserCommand,
   buildRemoveHotspotUserCommand,

@@ -171,24 +171,6 @@ router.get("/:routerId/packages", async (req, res) => {
   }
 });
 
-// Branding for captive portal
-router.get("/:routerId/portal-branding", async (req, res) => {
-  try {
-    const { routerId } = req.params;
-    const routerDoc = await db.collection("routers").doc(routerId).get();
-    if (!routerDoc.exists) {
-      return res.status(404).json({ error: "Router not found" });
-    }
-    const { ownerId } = routerDoc.data();
-    const ownerDoc = await db.collection("owners").doc(ownerId).get();
-    const owner = ownerDoc.data() || {};
-    res.json({ ownerId, logoUrl: owner.logoUrl || "", ownerName: owner.ownerName || "" });
-  } catch (err) {
-    console.error("Router branding error:", err);
-    res.status(500).json({ error: "Failed to fetch branding" });
-  }
-});
-
 // List routers for an owner
 router.get("/by-owner/:ownerId", async (req, res) => {
   try {

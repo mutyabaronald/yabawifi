@@ -42,6 +42,8 @@ async function processExpiringEntitlements(deps = {}) {
     return;
   }
 
+  console.log(`[RoamingExpiryCron] Query completed at ${nowIso}: active=${activeSnap.size}, expired=${expiredSnap.size}, total=${activeSnap.size + expiredSnap.size}`);
+
   const seen = new Set();
   const docs = [];
   for (const doc of activeSnap.docs) {
